@@ -4,6 +4,7 @@ import { parseArgs } from 'node:util';
 import { parse as parseYaml } from 'yaml';
 import { call, MODELS, runCost } from '../lib/claude.ts';
 import { publish } from '../lib/codimd.ts';
+import { withIndex } from '../lib/noteIndex.ts';
 import { note } from '../lib/render.ts';
 import { type RunResult, recordRun } from '../lib/runLog.ts';
 import { load, save } from '../lib/state.ts';
@@ -278,15 +279,22 @@ export async function run(
 
 if (import.meta.main) {
   const { values } = parseArgs({ options: { 'no-upload': { type: 'boolean' } } });
-  await recordRun(JOB, () => {
-    const token = process.env.GITHUB_TOKEN;
-    if (!token) throw new Error('GITHUB_TOKEN is not set');
-    const configFile = parseYaml(
-      readFileSync(join(process.env.CONFIG_DIR ?? 'config', 'changelog.yaml'), 'utf8'),
-    ) as { sources: SourceConfig[] };
-    return run(
-      { upload: !values['no-upload'], config: { sources: configFile.sources, token } },
-      { fetch, now: () => new Date(), call, publish },
-    );
-  });
+  await recordRun(
+    JOB,
+    withIndex(
+      JOB,
+      () => {
+        const token = process.env.GITHUB_TOKEN;
+        if (!token) throw new Error('GITHUB_TOKEN is not set');
+        const configFile = parseYaml(
+          readFileSync(join(process.env.CONFIG_DIR ?? 'config', 'changelog.yaml'), 'utf8'),
+        ) as { sources: SourceConfig[] };
+        return run(
+          { upload: !values['no-upload'], config: { sources: configFile.sources, token } },
+          { fetch, now: () => new Date(), call, publish },
+        );
+      },
+      publish,
+    ),
+  );
 }

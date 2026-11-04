@@ -5,6 +5,7 @@ import { XMLParser } from 'fast-xml-parser';
 import { parse as parseYaml } from 'yaml';
 import { call, MODELS, runCost } from '../lib/claude.ts';
 import { publish } from '../lib/codimd.ts';
+import { withIndex } from '../lib/noteIndex.ts';
 import { note } from '../lib/render.ts';
 import { type RunResult, recordRun } from '../lib/runLog.ts';
 import { load, save } from '../lib/state.ts';
@@ -320,26 +321,33 @@ if (import.meta.main) {
   });
   const date = values.date ?? new Date().toLocaleDateString('sv', { timeZone: 'Asia/Taipei' });
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`--date must be YYYY-MM-DD, got ${date}`);
-  await recordRun(JOB, () => {
-    const configFile = parseYaml(
-      readFileSync(join(process.env.CONFIG_DIR ?? 'config', 'reddit.yaml'), 'utf8'),
-    ) as { userAgent: string; topics: Record<string, string[]> };
-    return run(
-      {
-        date,
-        upload: !values['no-upload'],
-        config: {
-          userAgent: configFile.userAgent,
-          feeds: Object.values(configFile.topics).flat(),
-        },
+  await recordRun(
+    JOB,
+    withIndex(
+      JOB,
+      () => {
+        const configFile = parseYaml(
+          readFileSync(join(process.env.CONFIG_DIR ?? 'config', 'reddit.yaml'), 'utf8'),
+        ) as { userAgent: string; topics: Record<string, string[]> };
+        return run(
+          {
+            date,
+            upload: !values['no-upload'],
+            config: {
+              userAgent: configFile.userAgent,
+              feeds: Object.values(configFile.topics).flat(),
+            },
+          },
+          {
+            fetch,
+            sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+            now: () => new Date(),
+            call,
+            publish,
+          },
+        );
       },
-      {
-        fetch,
-        sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-        now: () => new Date(),
-        call,
-        publish,
-      },
-    );
-  });
+      publish,
+    ),
+  );
 }
