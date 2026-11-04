@@ -10,7 +10,7 @@ import { renderPage, summarizeMonth } from './status.ts';
 
 const MONTHLY_BUDGET_USD = 100;
 const RUNS_SHOWN = 30;
-const MAX_AGE_HOURS = { pr_stats: 26, reddit_digest: 26 };
+const MAX_AGE_HOURS = { pr_stats: 26, reddit_digest: 26, changelog_watch: 8 * 24 };
 
 function prMembers(): string[] {
   try {

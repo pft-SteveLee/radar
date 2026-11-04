@@ -12,7 +12,7 @@ docker compose up -d --build
 
 - 狀態頁：`http://<host>:8080`
 - PR 趨勢：`http://<host>:8080/prs`
-- 排程在 `crontab`（`pr_stats` 每天 06:30、`reddit_digest` 每天 07:30，台北時間）。
+- 排程在 `crontab`（`pr_stats` 每天 06:30、`reddit_digest` 每天 07:30、`changelog_watch` 每週五 09:00，台北時間）。
 - 改 `.env` 後要執行 `docker compose up -d jobs`；`restart` 不會重新讀取 `.env`。
 
 ## 手動執行
@@ -21,11 +21,13 @@ docker compose up -d --build
 docker compose exec jobs node jobs/redditDigest.ts
 docker compose exec jobs node jobs/redditDigest.ts --date 2026-11-04 --no-upload
 docker compose exec jobs node jobs/prStats.ts
+docker compose exec jobs node jobs/changelogWatch.ts --no-upload
 docker compose logs -f jobs
 ```
 
 - `reddit_digest`：`--date` 指定日期，`--no-upload` 不發佈到 CodiMD。
 - `pr_stats` 不帶參數時，抓最近 7 天（本週和上週）。
+- `changelog_watch`：`--no-upload` 只在 `output/changelog/<週>.md` 寫出週報，不發佈，也不更新狀態。需要 `GITHUB_TOKEN` 和 `ANTHROPIC_API_KEY`；來源在 `config/changelog.yaml`，「對我們的影響」用的背景資料在 `config/changelogContext.md`（請改成團隊實際的狀況）。第一次執行時，文件頁和目錄類的來源只建立基準，下週才會有它們的變更。同一週重跑不會蓋掉已發佈的週報。
 
 ## 批次更新 PR
 
