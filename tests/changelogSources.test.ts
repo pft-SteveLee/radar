@@ -144,3 +144,97 @@ for (const [source, status] of [
     );
   });
 }
+
+const skillsSource: SourceConfig = { id: 'skills', kind: 'githubSkills', repo: 'acme/skills' };
+
+const skillsRepo =
+  (files: Record<string, { sha: string; text: string }>, truncated = false) =>
+  (url: string) => {
+    if (url.includes('/git/trees/')) {
+      return json({
+        truncated,
+        tree: [
+          { path: 'README.md', type: 'blob', sha: 'readme' },
+          { path: 'skills/pdf', type: 'tree', sha: 'dir' },
+          ...Object.entries(files).map(([path, { sha }]) => ({ path, type: 'blob', sha })),
+        ],
+      });
+    }
+    return new Response(files[url.split('/contents/')[1]].text);
+  };
+
+const pdfFile = { sha: 'a1', text: 'pdf skill\n' };
+const docxFile = { sha: 'b1', text: 'docx skill\n' };
+
+test('githubSkills, no state: baseline, state lists every SKILL.md with sha and text', async () => {
+  const { deps } = makeDeps(
+    skillsRepo({ 'skills/pdf/SKILL.md': pdfFile, 'skills/docx/SKILL.md': docxFile }),
+  );
+  const result = await collectSource(skillsSource, null, deps);
+  assert.equal(result.baseline, true);
+  assert.deepEqual(result.items, []);
+  assert.deepEqual(result.nextState, {
+    files: { 'skills/pdf/SKILL.md': pdfFile, 'skills/docx/SKILL.md': docxFile },
+  });
+});
+
+test('githubSkills, new folder: item with the full SKILL.md as text and a title naming the skill', async () => {
+  const { deps } = makeDeps(
+    skillsRepo({ 'skills/pdf/SKILL.md': pdfFile, 'skills/docx/SKILL.md': docxFile }),
+  );
+  const result = await collectSource(
+    skillsSource,
+    { files: { 'skills/pdf/SKILL.md': pdfFile } },
+    deps,
+  );
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].text, 'docx skill\n');
+  assert.match(result.items[0].title, /docx/);
+  assert.equal(
+    result.items[0].url,
+    'https://github.com/acme/skills/blob/HEAD/skills/docx/SKILL.md',
+  );
+});
+
+test('githubSkills, changed sha: item with a unified diff; unchanged sha: no fetch of that file', async () => {
+  const changed = { sha: 'a2', text: 'pdf skill\nnew line\n' };
+  const { deps, requests } = makeDeps(
+    skillsRepo({ 'skills/pdf/SKILL.md': changed, 'skills/docx/SKILL.md': docxFile }),
+  );
+  const result = await collectSource(
+    skillsSource,
+    { files: { 'skills/pdf/SKILL.md': pdfFile, 'skills/docx/SKILL.md': docxFile } },
+    deps,
+  );
+  assert.equal(result.items.length, 1);
+  assert.match(result.items[0].text, /^\+new line$/m);
+  assert.equal(requests.filter((request) => request.url.includes('docx')).length, 0);
+  assert.deepEqual(result.nextState, {
+    files: { 'skills/pdf/SKILL.md': changed, 'skills/docx/SKILL.md': docxFile },
+  });
+});
+
+test('githubSkills, deleted skill folder: item says the skill was removed and it leaves the state', async () => {
+  const { deps } = makeDeps(skillsRepo({ 'skills/pdf/SKILL.md': pdfFile }));
+  const result = await collectSource(
+    skillsSource,
+    { files: { 'skills/pdf/SKILL.md': pdfFile, 'skills/docx/SKILL.md': docxFile } },
+    deps,
+  );
+  assert.equal(result.items.length, 1);
+  assert.match(result.items[0].text, /docx.*removed/);
+  assert.deepEqual(result.nextState, { files: { 'skills/pdf/SKILL.md': pdfFile } });
+});
+
+test('githubSkills, truncated tree: throws instead of reporting skills as removed', async () => {
+  const { deps } = makeDeps(skillsRepo({ 'skills/pdf/SKILL.md': pdfFile }, true));
+  await assert.rejects(
+    collectSource(skillsSource, { files: { 'skills/pdf/SKILL.md': pdfFile } }, deps),
+    new Error('skills: file tree is truncated'),
+  );
+});
+
+test('githubSkills: non-200 response throws an error naming the source id and status', async () => {
+  const { deps } = makeDeps(() => new Response('nope', { status: 403 }));
+  await assert.rejects(collectSource(skillsSource, null, deps), new Error('skills: HTTP 403'));
+});

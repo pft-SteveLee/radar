@@ -120,6 +120,76 @@ async function collectReleases(
   };
 }
 
+interface SkillFile {
+  sha: string;
+  text: string;
+}
+
+interface SkillsState {
+  files: Record<string, SkillFile>;
+}
+
+interface GithubTree {
+  truncated: boolean;
+  tree: { path: string; type: string; sha: string }[];
+}
+
+const SKILL_PATH = /^skills\/([^/]+)\/SKILL\.md$/;
+
+async function collectSkills(
+  source: SourceConfig,
+  previous: SkillsState | null,
+  deps: SourceDeps,
+): Promise<CollectResult> {
+  const tree = JSON.parse(
+    await getText(
+      source,
+      `${API}/repos/${source.repo}/git/trees/HEAD?recursive=1`,
+      githubHeaders(deps.token, 'application/vnd.github+json'),
+      deps,
+    ),
+  ) as GithubTree;
+  if (tree.truncated) throw new Error(`${source.id}: file tree is truncated`);
+
+  const files: Record<string, SkillFile> = {};
+  const items: ChangeItem[] = [];
+  const urlOf = (path: string) => `https://github.com/${source.repo}/blob/HEAD/${path}`;
+  for (const entry of tree.tree) {
+    const name = SKILL_PATH.exec(entry.path)?.[1];
+    if (entry.type !== 'blob' || !name) continue;
+    const known = previous?.files[entry.path];
+    if (known?.sha === entry.sha) {
+      files[entry.path] = known;
+      continue;
+    }
+    const text = await getText(
+      source,
+      `${API}/repos/${source.repo}/contents/${entry.path}`,
+      githubHeaders(deps.token, 'application/vnd.github.raw+json'),
+      deps,
+    );
+    files[entry.path] = { sha: entry.sha, text };
+    if (!previous) continue;
+    const title = `${source.repo} skill ${name}`;
+    if (!known) {
+      items.push({ source: source.id, title, url: urlOf(entry.path), text });
+    } else {
+      items.push(...textChange(source, urlOf(entry.path), title, known, text).items);
+    }
+  }
+  for (const path of Object.keys(previous?.files ?? {})) {
+    if (files[path]) continue;
+    const name = SKILL_PATH.exec(path)?.[1];
+    items.push({
+      source: source.id,
+      title: `${source.repo} skill ${name}`,
+      url: urlOf(path),
+      text: `Skill ${name} was removed from ${source.repo}.`,
+    });
+  }
+  return { items, baseline: !previous, nextState: { files } };
+}
+
 export async function collectSource(
   source: SourceConfig,
   previousState: unknown | null,
@@ -150,6 +220,6 @@ export async function collectSource(
       );
     }
     case 'githubSkills':
-      throw new Error(`${source.id}: githubSkills is not implemented`);
+      return collectSkills(source, previousState as SkillsState | null, deps);
   }
 }
