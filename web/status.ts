@@ -8,7 +8,7 @@ export interface MonthSummary {
 }
 
 const TIME_ZONE = 'Asia/Taipei';
-const taipeiTime = (iso: string) =>
+export const taipeiTime = (iso: string) =>
   new Date(iso).toLocaleString('sv', { timeZone: TIME_ZONE }).slice(0, 16);
 
 export function summarizeMonth(lines: CostLine[], now: Date): MonthSummary {
