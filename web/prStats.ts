@@ -60,37 +60,43 @@ export function readWeeks(weeks: string[]): WeekCounts[] {
 const countOf = (week: WeekCounts, member: string) =>
   week.counts === null ? null : (week.counts[member] ?? 0);
 
-function chart(weeks: WeekCounts[], members: string[]): string {
+interface Series {
+  name: string;
+  values: (number | null)[];
+}
+
+const teamTotal = (week: WeekCounts, members: string[]) =>
+  week.counts === null
+    ? null
+    : members.reduce((total, member) => total + (countOf(week, member) ?? 0), 0);
+
+function chart(weeks: WeekCounts[], series: Series[], label: string): string {
   const plotWidth = CHART.width - CHART.left - CHART.right;
   const plotHeight = CHART.height - CHART.top - CHART.bottom;
-  const highest = Math.max(
-    1,
-    ...members.flatMap((member) => weeks.map((week) => countOf(week, member) ?? 0)),
-  );
+  const highest = Math.max(1, ...series.flatMap((line) => line.values.map((value) => value ?? 0)));
   const x = (index: number) => CHART.left + (index * plotWidth) / Math.max(weeks.length - 1, 1);
   const y = (count: number) => CHART.top + (1 - count / highest) * plotHeight;
-  const lines = members.map((member, memberIndex) => {
-    const color = COLORS[memberIndex % COLORS.length];
+  const lines = series.map((line, lineIndex) => {
+    const color = COLORS[lineIndex % COLORS.length];
     let penDown = false;
     let path = '';
     const dots: string[] = [];
-    for (const [index, week] of weeks.entries()) {
-      const count = countOf(week, member);
-      if (count === null) {
+    for (const [index, value] of line.values.entries()) {
+      if (value === null) {
         penDown = false;
         continue;
       }
-      path += `${penDown ? 'L' : 'M'}${x(index).toFixed(1)} ${y(count).toFixed(1)} `;
+      path += `${penDown ? 'L' : 'M'}${x(index).toFixed(1)} ${y(value).toFixed(1)} `;
       penDown = true;
       dots.push(
-        `<circle cx="${x(index).toFixed(1)}" cy="${y(count).toFixed(1)}" r="2.5" fill="${color}"><title>${escapeHtml(member)} ${week.week}: ${count}</title></circle>`,
+        `<circle cx="${x(index).toFixed(1)}" cy="${y(value).toFixed(1)}" r="2.5" fill="${color}"><title>${escapeHtml(line.name)} ${weeks[index].week}: ${value}</title></circle>`,
       );
     }
-    return `<path data-member="${escapeHtml(member)}" d="${path.trim()}" fill="none" stroke="${color}" stroke-width="2"/>\n${dots.join('')}`;
+    return `<path data-member="${escapeHtml(line.name)}" d="${path.trim()}" fill="none" stroke="${color}" stroke-width="2"/>\n${dots.join('')}`;
   });
   const firstWeek = weeks[0]?.week ?? '';
   const lastWeek = weeks.at(-1)?.week ?? '';
-  return `<svg viewBox="0 0 ${CHART.width} ${CHART.height}" role="img" aria-label="每位成員每週 merged PR 數，${firstWeek} 到 ${lastWeek}">
+  return `<svg viewBox="0 0 ${CHART.width} ${CHART.height}" role="img" aria-label="${label}，${firstWeek} 到 ${lastWeek}">
 <line x1="${CHART.left}" y1="${CHART.top + plotHeight}" x2="${CHART.width - CHART.right}" y2="${CHART.top + plotHeight}" class="axis"/>
 <text x="${CHART.left - 6}" y="${CHART.top + 10}" text-anchor="end">${highest}</text>
 <text x="${CHART.left - 6}" y="${CHART.top + plotHeight}" text-anchor="end">0</text>
@@ -99,8 +105,31 @@ function chart(weeks: WeekCounts[], members: string[]): string {
 ${lines.join('\n')}
 </svg>
 <ul class="legend">
-${members.map((member, index) => `<li><span style="background:${COLORS[index % COLORS.length]}"></span>${escapeHtml(member)}</li>`).join('\n')}
+${series.map((line, index) => `<li><span style="background:${COLORS[index % COLORS.length]}"></span>${escapeHtml(line.name)}</li>`).join('\n')}
 </ul>`;
+}
+
+function teamChart(weeks: WeekCounts[], members: string[]): string {
+  const totals = weeks.map((week) => teamTotal(week, members));
+  const averages = totals.map((total) =>
+    total === null ? null : Math.round((total / members.length) * 10) / 10,
+  );
+  return chart(
+    weeks,
+    [
+      { name: '合計', values: totals },
+      { name: '人均', values: averages },
+    ],
+    '團隊每週 merged PR 合計與人均',
+  );
+}
+
+function memberChart(weeks: WeekCounts[], members: string[]): string {
+  return chart(
+    weeks,
+    members.map((member) => ({ name: member, values: weeks.map((week) => countOf(week, member)) })),
+    '每位成員每週 merged PR 數',
+  );
 }
 
 function table(weeks: WeekCounts[], members: string[]): string {
@@ -108,12 +137,12 @@ function table(weeks: WeekCounts[], members: string[]): string {
   const rows = weeks
     .map((week) => {
       const cells = members.map((member) => `<td>${countOf(week, member) ?? '—'}</td>`).join('');
-      return `<tr><th scope="row">${week.week}</th>${cells}</tr>`;
+      return `<tr><th scope="row">${week.week}</th>${cells}<td>${teamTotal(week, members) ?? '—'}</td></tr>`;
     })
     .join('\n');
   return `<div class="scroll"><table>
 <caption>每週 merged PR 數（— 表示該週尚未抓取）</caption>
-<thead><tr><th scope="col">週</th>${header}</tr></thead>
+<thead><tr><th scope="col">週</th>${header}<th scope="col">合計</th></tr></thead>
 <tbody>
 ${rows}
 </tbody>
@@ -135,7 +164,7 @@ export function renderPrPage({
       : `<a href="/prs?weeks=${choice}">${choice} 週</a>`,
   ).join(' · ');
   const content = members.length
-    ? `${chart(weeks, members)}\n${table(weeks, members)}`
+    ? `<h2>團隊</h2>\n${teamChart(weeks, members)}\n<h2>個人</h2>\n${memberChart(weeks, members)}\n${table(weeks, members)}`
     : '<p>請在 config/prStats.yaml 填 members（GitHub 帳號）</p>';
   return `<!doctype html>
 <html lang="zh-Hant">
