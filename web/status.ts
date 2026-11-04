@@ -57,9 +57,22 @@ interface PageInput {
   summary: MonthSummary;
   runs: RunRecord[];
   budgetUsd: number;
+  now: Date;
+  maxAgeHours: Record<string, number>;
 }
 
-export function renderPage({ summary, runs, budgetUsd }: PageInput): string {
+function freshnessItem(job: string, limitHours: number, runs: RunRecord[], now: Date): string {
+  const lastSuccess = runs.find((run) => run.job === job && run.status === 'ok');
+  if (!lastSuccess) return `<li class="stale">${escapeHtml(job)} 尚無成功紀錄，已逾時</li>`;
+  const hours = Math.floor((now.getTime() - Date.parse(lastSuccess.startedAt)) / 3_600_000);
+  const text = `${escapeHtml(job)} 上次成功：${hours} 小時前（${taipeiTime(lastSuccess.startedAt)}）`;
+  return hours > limitHours ? `<li class="stale">${text}，已逾時</li>` : `<li>${text}</li>`;
+}
+
+export function renderPage({ summary, runs, budgetUsd, now, maxAgeHours }: PageInput): string {
+  const freshness = Object.entries(maxAgeHours)
+    .map(([job, limitHours]) => freshnessItem(job, limitHours, runs, now))
+    .join('\n');
   const percent = Math.round((summary.totalUsd / budgetUsd) * 100);
   const jobRows = summary.byJob
     .map((entry) => `<tr><td>${escapeHtml(entry.job)}</td><td>${dollars(entry.usd)}</td></tr>`)
@@ -94,12 +107,18 @@ table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
 caption { text-align: left; color: var(--muted); padding-bottom: 0.5rem; }
 th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
 tr.failed { background: var(--bad-bg); color: var(--bad); }
+.freshness { list-style: none; padding: 0; }
+.freshness li { padding: 0.4rem 0.6rem; }
+.freshness li.stale { background: var(--bad-bg); color: var(--bad); font-weight: 600; }
 .error { word-break: break-word; }
 a { color: var(--accent); }
 </style>
 </head>
 <body>
 <h1>radar 狀態</h1>
+<ul class="freshness">
+${freshness}
+</ul>
 <h2>${summary.month} 花費</h2>
 <p>${dollars(summary.totalUsd)} / $${budgetUsd}（${percent}%）</p>
 <progress value="${summary.totalUsd.toFixed(2)}" max="${budgetUsd}" aria-label="本月花費佔額度"></progress>

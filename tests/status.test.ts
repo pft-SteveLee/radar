@@ -27,11 +27,13 @@ const run = (overrides: Partial<RunRecord> = {}): RunRecord => ({
   ...overrides,
 });
 
-const page = (runs: RunRecord[], totalUsd = 12.4) =>
+const page = (runs: RunRecord[], totalUsd = 12.4, now = '2026-11-04T05:00:00Z') =>
   renderPage({
     summary: { month: '2026-11', totalUsd, byJob: [{ job: 'reddit_digest', usd: totalUsd }] },
     runs,
     budgetUsd: 100,
+    now: new Date(now),
+    maxAgeHours: { reddit_digest: 26 },
   });
 
 test('summarizeMonth counts only this month in Taipei time, per job, biggest first', () => {
@@ -106,4 +108,33 @@ test('renderPage does not turn a non-http url into a link', () => {
 
 test('renderPage says so when there are no runs yet', () => {
   assert.match(page([]), /尚無執行紀錄/);
+});
+
+test('renderPage shows how long ago a job last succeeded, not stale within its limit', () => {
+  const html = page([run()]);
+
+  assert.match(html, /reddit_digest 上次成功：5 小時前（2026-11-04 07:30）/);
+  assert.doesNotMatch(html, /class="stale"/);
+});
+
+test('renderPage flags a job whose last success is older than its limit', () => {
+  const html = page([run()], 12.4, '2026-11-05T09:00:00Z');
+
+  assert.match(html, /class="stale"[^>]*>reddit_digest 上次成功：33 小時前/);
+  assert.match(html, /已逾時/);
+});
+
+test('renderPage ignores a failed run when measuring the last success', () => {
+  const html = page([
+    run({ status: 'failed', error: 'x', url: null, startedAt: '2026-11-04T04:00:00.000Z' }),
+    run(),
+  ]);
+
+  assert.match(html, /reddit_digest 上次成功：5 小時前/);
+});
+
+test('renderPage flags a job that has never succeeded', () => {
+  const html = page([run({ status: 'failed', error: 'x', url: null })]);
+
+  assert.match(html, /class="stale"[^>]*>reddit_digest 尚無成功紀錄/);
 });

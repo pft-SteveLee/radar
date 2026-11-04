@@ -32,7 +32,7 @@ npm run digest -- --date 2026-11-04 --no-upload   # run the job without publishi
 
 Docker: `mkdir -p state output`, copy `.env.example` to `.env` and fill it, then `docker compose up -d --build`. Create `state/` and `output/` first: Docker would otherwise create them as root and the container's `node` user could not write. The Dockerfile deliberately avoids BuildKit-only features (`ADD --checksum`), because the dev machine has no BuildKit.
 
-Status page: the `web` service (same image, `node web/statusServer.ts`) serves `http://<host>:8080` on the LAN without login: this month's cost against the $100 budget, cost per job, and the last 30 runs with result, error, warnings, cost and note link. It only reads `output/cost.jsonl` and `output/runs.jsonl` (mounted read-only) and has no access to the Docker socket. Full job logs are not in it: use `docker compose logs -f jobs`.
+Status page: the `web` service (same image, `node web/statusServer.ts`) serves `http://<host>:8080` on the LAN without login: this month's cost against the $100 budget, cost per job, and the last 30 runs with result, error, warnings, cost and note link. It only reads `output/cost.jsonl` and `output/runs.jsonl` (mounted read-only) and has no access to the Docker socket. At the top it shows per job how long ago the last successful run started, in red when older than that job's limit (`MAX_AGE_HOURS` in `web/statusServer.ts`, 26 hours for `reddit_digest`): a schedule that never fired leaves no run record, so this is the only sign of it. Add a limit there for every new job. Full job logs are not in it: use `docker compose logs -f jobs`.
 
 ## Architecture
 
