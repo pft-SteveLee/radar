@@ -38,12 +38,28 @@ docker compose exec jobs node jobs/prStats.ts --from 2025-11-10 --to 2026-11-04
 - 執行結果會出現在狀態頁。
 - `config/prStats.yaml` 的 `members` 只決定 `/prs` 顯示誰，改它不用重抓。
 
-### GITHUB_TOKEN
+### 只跑 pr_stats 需要的設定
 
-Token 必須看得到 `config/prStats.yaml` 中 org 的私有 repo：
+`pr_stats` 不呼叫 Claude，也不發佈到 CodiMD，所以 `.env` 只需要：
 
-- classic token：勾 `repo`。
-- fine-grained token：Resource owner 選該 org，Pull requests 與 Metadata 給唯讀。
+| 變數 | 必要 | 說明 |
+| --- | --- | --- |
+| `GITHUB_TOKEN` | 是 | 沒設會直接報錯 `GITHUB_TOKEN is not set` |
+| `TZ` | 建議 | `Asia/Taipei`，影響排程時間 |
+
+`ANTHROPIC_API_KEY`、`CODIMD_*` 可以留空。另外要有 `config/prStats.yaml`（`orgs` 為要統計的 org，`members` 為 `/prs` 顯示的人）。
+
+### GITHUB_TOKEN 權限
+
+只讀取 merged PR 的作者，不寫入任何東西。Token 必須看得到 `orgs` 裡每個 org 的私有 repo，看不到的 repo 會被當成不存在：
+
+- classic token：勾 `repo`（只統計公開 repo 的話，`public_repo` 就夠）。其他 scope 都不用勾。
+- fine-grained token：
+  - Resource owner 選該 org（不是個人帳號）。
+  - Repository access 選 All repositories，只選部分 repo 就只會統計那些。
+  - Repository permissions：Pull requests 設 Read-only；Metadata 為 Read-only（系統自動加上）。
+  - 該 org 若要求核准 fine-grained token，要等管理員核准才生效。
+- org 啟用 SAML SSO 時，token 要在 GitHub 的 Tokens 頁面對該 org 按 Authorize，否則一樣回 0 筆。
 
 看不到時，GitHub 回傳 0 筆而不是錯誤，所以每週都會是 0，但這次執行仍顯示成功。重抓前先檢查（把整段原樣貼上，不要讓終端機在字串中間斷行）：
 
