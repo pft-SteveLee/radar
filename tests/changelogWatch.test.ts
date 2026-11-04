@@ -4,7 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, test } from 'node:test';
 import type { ChangeItem } from '../jobs/changelogSources.ts';
-import { type Config, type Deps, run, triageItem } from '../jobs/changelogWatch.ts';
+import {
+  type Change,
+  type Config,
+  type Deps,
+  run,
+  selectChanges,
+  triageItem,
+} from '../jobs/changelogWatch.ts';
 import { MODELS } from '../lib/claude.ts';
 import { load, save } from '../lib/state.ts';
 
@@ -431,4 +438,95 @@ test('more than 40 important changes: Sonnet gets the 40 most important, 棄用/
   assert.deepEqual(otherTexts.slice(0, 4), ['big 0', 'big 1', 'big 2', 'big 3']);
   assert.ok(!otherTexts.includes('feature 44'));
   assert.match(result.warnings.join('\n'), /10/);
+});
+
+const change = (
+  source: string,
+  text: string,
+  importance: number,
+  category: Change['category'] = '新功能',
+): Change => ({ source, url: `https://example.test/${source}`, text, category, importance });
+
+const many = (source: string, count: number, importance: number, category?: Change['category']) =>
+  Array.from({ length: count }, (_, index) =>
+    change(source, `${source} ${index}`, importance, category),
+  );
+
+test('selectChanges: one busy source cannot push out another source with a lower importance', () => {
+  const selected = selectChanges([...many('orca', 100, 3), change('skills', 'new skill', 1)]);
+  assert.equal(selected.length, 40);
+  assert.ok(selected.some((item) => item.text === 'new skill'));
+});
+
+test('selectChanges: every source gets 4 places before the rest are filled by rank', () => {
+  const selected = selectChanges([
+    ...many('orca', 100, 3),
+    ...many('skills', 10, 1),
+    ...many('docs', 2, 1),
+  ]);
+  assert.equal(selected.filter((item) => item.source === 'skills').length, 4);
+  assert.equal(selected.filter((item) => item.source === 'docs').length, 2);
+  assert.equal(selected.filter((item) => item.source === 'orca').length, 34);
+});
+
+test('selectChanges: urgent changes come first, and more than 40 of them are cut to 40', () => {
+  const selected = selectChanges([...many('orca', 5, 3), ...many('skills', 45, 2, '棄用')]);
+  assert.equal(selected.length, 40);
+  assert.ok(selected.every((item) => item.category === '棄用'));
+});
+
+test('selectChanges: under 40 changes are all kept, in rank order', () => {
+  const selected = selectChanges([
+    change('a', 'low', 1),
+    change('b', 'high', 3),
+    change('a', 'price', 2, '價格'),
+  ]);
+  assert.deepEqual(
+    selected.map((item) => item.text),
+    ['price', 'high', 'low'],
+  );
+});
+
+test('upload false: the triage result of the week is written with total, selected and the flags', async () => {
+  seedState();
+  const { world, deps } = makeWorld();
+  world.releases = [newRelease];
+  world.triage = () => ({
+    changes: Array.from({ length: 45 }, (_, index) => ({
+      text: `feature ${index}`,
+      category: '新功能',
+      importance: 1,
+    })),
+  });
+  await run({ upload: false, config }, deps);
+  const file = JSON.parse(
+    readFileSync(join(outputDir, 'changelog', `${WEEK}.triage.json`), 'utf8'),
+  ) as {
+    total: number;
+    selected: number;
+    changes: { text: string; selected: boolean }[];
+  };
+  assert.equal(file.total, 45);
+  assert.equal(file.selected, 40);
+  assert.equal(file.changes.length, 45);
+  assert.equal(file.changes.filter((item) => item.selected).length, 40);
+});
+
+test('the triage result is still written when the upload fails', async () => {
+  seedState();
+  const { world, deps } = makeWorld();
+  world.releases = [newRelease];
+  world.publishFails = true;
+  await assert.rejects(run({ upload: true, config }, deps), new Error('CodiMD down'));
+  assert.ok(existsSync(join(outputDir, 'changelog', `${WEEK}.triage.json`)));
+});
+
+test('the team context is part of the Haiku system prompt', async () => {
+  seedState();
+  writeFileSync(join(configDir, 'changelogContext.md'), '團隊使用 Orca ADE');
+  const { world, deps, calls } = makeWorld();
+  world.releases = [newRelease];
+  await run({ upload: false, config }, deps);
+  const haiku = calls.find((callOptions) => callOptions.model === MODELS.haiku);
+  assert.match(haiku?.system ?? '', /團隊使用 Orca ADE/);
 });
