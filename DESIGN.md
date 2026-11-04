@@ -23,7 +23,15 @@ colors:
   series-5: "#7c3aed"
   series-6: "#0891b2"
   series-7: "#db2777"
-  series-8: "#65a30d"
+  series-8: "#4d7c0f"
+  series-1-dark: "#60a5fa"
+  series-2-dark: "#f87171"
+  series-3-dark: "#4ade80"
+  series-4-dark: "#fbbf24"
+  series-5-dark: "#a78bfa"
+  series-6-dark: "#22d3ee"
+  series-7-dark: "#f472b6"
+  series-8-dark: "#a3e635"
 typography:
   headline:
     fontFamily: "system-ui, \"Noto Sans TC\", \"PingFang TC\", \"Microsoft JhengHei\", sans-serif"
@@ -52,7 +60,10 @@ typography:
 rounded:
   none: "0"
 spacing:
+  hair: "0.25rem"
+  tight: "0.3rem"
   xs: "0.4rem"
+  gap: "0.5rem"
   sm: "0.6rem"
   md: "1rem"
   lg: "2rem"
@@ -73,7 +84,6 @@ components:
     padding: "0.4rem 0.6rem"
   budget-meter:
     backgroundColor: "{colors.ink-blue}"
-    rounded: "{rounded.none}"
     height: "0.75rem"
     width: "100%"
   link:
@@ -90,7 +100,7 @@ radar's pages are a researcher's notebook kept by a running experiment. Each pag
 
 The system is quiet by default and precise when it speaks. One ink (blue) marks what you can act on or follow: links and the budget meter. One correction color (red, on a pale red wash) marks what failed or went stale, and always comes with words that say so. Everything else is graphite on paper. Density is a working notebook's: compact data rows, generous gaps only between sections, one centered column.
 
-Both themes come from the system: a light paper sheet and a dark one that follows `prefers-color-scheme`. Every color has a dark counterpart.
+Both themes come from the system: a light paper sheet and a dark one that follows `prefers-color-scheme`. Every color, including the chart series, has a dark counterpart, and the browser's own form controls follow the theme (`color-scheme: light dark`).
 
 **Key Characteristics:**
 
@@ -121,13 +131,15 @@ A warm stone neutral ground with a single blue ink and a single red correction c
 
 ### Chart Series
 
-- **Series 1–8** (`series-1` … `series-8`): one color per line on the PR charts, assigned in member order and cycled after eight. On the team chart, series 1 is the total and series 2 the average. These colors identify lines. They carry no status meaning.
+- **Series 1–8** (`series-1` … `series-8`, each with a `-dark` version): one color per line on the PR charts, assigned in member order and cycled after eight. They are CSS variables (`--s1` … `--s8`), switched by the dark block. On the team chart there is one line, the total, in series 1. These colors identify lines. They carry no status meaning, and they never carry identity alone: each series also has its own marker shape (see Line Chart).
 
 ### Named Rules
 
 **The Correction Ink Rule.** Red appears only where something failed or is overdue, and always next to words that say so ("失敗", "已逾時", "尚無成功紀錄"). Red is never decoration, emphasis or a brand color.
 
 **The One Ink Rule.** Blue is for links and the measured amount. It never marks a status or a heading.
+
+**The Dash Rule.** An em dash `—` means "no value here". Three places use it, and each says so in context: a week that was never fetched (the table caption explains it), a run with no warnings, and a run with no note link. It is never 0.
 
 ## Typography
 
@@ -153,7 +165,9 @@ A single centered column, at most 64rem wide, with 1rem padding on every side. S
 
 Tables span the full column. A table that is too wide, such as the PR table with many members, scrolls sideways inside its own container and never makes the page scroll. Charts scale to the column width through their `viewBox` (800 × 260), keeping their aspect ratio. The layout is the same on phones, only narrower.
 
-Spacing is a short scale: 0.4rem and 0.6rem inside rows and list items, 1rem for the page edge and gaps, and 2rem between sections.
+Spacing is a short scale: 0.4rem and 0.6rem inside rows and list items, 1rem for the page edge and gaps, and 2rem between sections. Three small steps serve tight spots: 0.25rem between legend rows, 0.3rem between a legend marker and its name, and 0.5rem for gaps in the date form and under captions.
+
+Each page is one `<main>` landmark. Links to the other page and the range choices sit in labelled `<nav>` elements. Links and form controls keep at least 24px of room to tap.
 
 ## Elevation & Depth
 
@@ -165,7 +179,7 @@ None. The system is completely flat: no `box-shadow`, no layered surfaces, no ov
 
 ## Shapes
 
-All corners are square (radius 0) everywhere: tables, wash rows, the legend swatches (0.8rem squares) and the budget meter. Borders are 1px ruled lines under table rows, never full outlines around content. On charts, lines are 2px strokes and data points are 2.5px-radius dots. Those dots are the only round shapes in the system.
+Corners are square (radius 0) in everything the system draws: tables and wash rows. The one exception is the budget meter, a native `<progress>` that keeps the browser's own rounded bar, because CSS cannot square it. Borders are 1px ruled lines under table rows, never full outlines around content. On charts, lines are 2px strokes and data points are small markers in four shapes: circle, square, diamond and triangle. The legend repeats each marker beside the series name.
 
 ## Components
 
@@ -176,33 +190,39 @@ The working surface of every page: plain and dense.
 - **Cells:** data type size, 0.4rem × 0.6rem padding, left-aligned, top-aligned, a 1px ruled line underneath.
 - **Caption:** pencil gray, above the table, and it also says how to read it (for example "— 表示該週尚未抓取").
 - **Row headers:** use `<th scope="row">` for the week or job.
-- **Failed row:** correction wash fills the row, the text turns correction red, and the error message sits under the word 失敗.
-- **Missing value:** an em dash `—`, never 0 or blank.
+- **Failed row:** correction wash fills the row, the text turns correction red, and the error message sits in its own full-width row under it, so it never squeezes into a narrow column on a phone. A link inside a failed row takes the row's color and is underlined.
+- **Warnings:** a count that opens in place (`<details>`) to the list of warnings.
+- **Current week:** the newest week is marked 「（進行中）」, because its count is not final.
+- **Scrolling hint:** on narrow screens the caption adds 「（可左右捲動）」.
+- **Missing value:** an em dash `—`, never 0 or blank (see The Dash Rule).
 
 ### Freshness Line
 
 A plain list at the top of the status page, one line per job: "{job} 上次成功：N 小時前（time）".
 
 - **Normal:** body text with no marker.
-- **Stale:** correction wash, correction red, weight 600, ending with "，已逾時".
+- **Stale:** correction wash, correction red, weight 600, ending with "，已逾時（上限 N 小時）".
+- **Latest failure:** when a run failed after the last success, the line ends with "，最近一次：time 失敗：error", in either state.
 
 ### Budget Meter
 
-A native `<progress>` bar: full width, 0.75rem high, ink blue via `accent-color`. It sits right under the "$spent / $100（N%）" line, which states the same number in text.
+A native `<progress>` bar: full width, 0.75rem high, ink blue via `accent-color`. It sits right under the "$spent / $100（N%）" line, which states the same number in text. A spend under 1% reads "<1%", not 0%. Above the budget the line turns correction red, bold, and ends with "，已超支".
 
 ### Line Chart
 
 A hand-drawn inline SVG with `role="img"` and an `aria-label` that names the measure and the week range.
 
-- **Axes:** one ruled baseline, with the maximum and 0 in pencil gray on the left and the first and last week below.
+- **Axes:** one baseline in pencil gray (dark enough to read as a graphic), with the maximum and 0 in pencil gray on the left and the first and last week below. On a phone the axis text grows to 20 units so it stays readable.
 - **Lines:** 2px strokes in series colors. A line breaks at a week that has no data instead of dropping to zero.
-- **Points:** 2.5px dots. Each dot carries a `<title>` with "{name} {week}: {value}".
-- **Legend:** an unstyled list under the chart, each item a square series swatch followed by the name.
+- **Current week:** the last segment is dashed and its marker is hollow, with "（進行中）" in its `<title>`.
+- **Unfetched weeks:** a stretch of weeks with no data is a pale band labelled 「未抓取」 (the label is dropped when the band is narrow).
+- **Points:** a marker per value, circle, square, diamond or triangle by series order. Each carries a `<title>` with "{name} {week}: {value}".
+- **Legend:** an unstyled list under the chart, each item the series marker followed by the name.
 - **Pairing:** every chart has a table on the same page with the same numbers.
 
 ### Range Picker
 
-Links for 12 / 26 / 52 weeks, with the active choice in bold instead of a link. Below them, a native GET form with two `type="date"` inputs and a native submit button, in a wrapping flex row with 0.5rem gaps. Native controls are left unstyled.
+Links for 12 / 26 / 52 weeks in a labelled `<nav>`, with the active choice in bold and `aria-current="true"` instead of a link. Below them, a native GET form with two `type="date"` inputs (no later than today) and a native submit button, in a wrapping flex row with 0.5rem gaps. Native controls are left unstyled except for a 2rem minimum height. When the requested range is invalid, a line says so and names the range shown instead.
 
 ### Links
 
@@ -217,6 +237,8 @@ Ink blue, underlined by the browser default. They are used for navigation betwee
 - **Do** give every chart a table with the same numbers, and an `aria-label` that names the measure and the range.
 - **Do** keep tables inside a sideways-scrolling container, so the page itself never scrolls horizontally.
 - **Do** define a dark counterpart for any new color in the `prefers-color-scheme: dark` block.
+- **Do** mark data that is not final (the current week) and data that does not exist (unfetched weeks) differently from final numbers.
+- **Do** tell series apart by marker shape as well as by color.
 
 ### Don't:
 
@@ -224,3 +246,4 @@ Ink blue, underlined by the browser default. They are used for navigation betwee
 - **Don't** use ink blue for status, or correction red for anything that is not a failure or overdue.
 - **Don't** add web fonts, icon fonts or client-side JavaScript. The pages must render as plain server HTML.
 - **Don't** treat the chart series red (`series-2`) as an alarm: it only identifies a line. Its closeness to correction red is a known tension in the current palette.
+- **Don't** add a chart line that is a rescaled copy of another (such as an average next to a total). Put derived numbers in the table.
