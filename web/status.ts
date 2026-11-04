@@ -41,7 +41,9 @@ h2 { font-size: 1.05rem; margin-top: 2rem; }
 table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
 caption { text-align: left; color: var(--muted); padding-bottom: 0.5rem; }
 th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
-a { color: var(--accent); }`;
+a { color: var(--accent); }
+.hint { display: none; }
+@media (max-width: 40rem) { .hint { display: inline; } }`;
 
 const dollars = (usd: number) => `$${usd.toFixed(2)}`;
 
@@ -54,16 +56,18 @@ function runRow(run: RunRecord): string {
   const failed = run.status === 'failed';
   const note =
     run.url && /^https?:\/\//.test(run.url) ? `<a href="${escapeHtml(run.url)}">筆記</a>` : '—';
-  const detail = failed ? `<br><span class="error">${escapeHtml(run.error ?? '')}</span>` : '';
+  const detail = failed
+    ? `\n<tr class="failed"><td colspan="7" class="error">${escapeHtml(run.error || '無錯誤訊息')}</td></tr>`
+    : '';
   return `<tr${failed ? ' class="failed"' : ''}>
 <td>${escapeHtml(run.job)}</td>
 <td>${taipeiTime(run.startedAt)}</td>
 <td>${duration(run)}</td>
-<td>${failed ? '失敗' : '成功'}${detail}</td>
+<td>${failed ? '失敗' : '成功'}</td>
 <td>${warningsCell(run.warnings)}</td>
 <td>${dollars(run.costUsd)}</td>
 <td>${note}</td>
-</tr>`;
+</tr>${detail}`;
 }
 
 interface PageInput {
@@ -117,7 +121,7 @@ export function renderPage({ summary, runs, budgetUsd, now, maxAgeHours }: PageI
     .join('\n');
   const runTable = runs.length
     ? `<div class="scroll"><table>
-<caption>最近 ${runs.length} 次執行</caption>
+<caption>最近 ${runs.length} 次執行<span class="hint">（可左右捲動）</span></caption>
 <thead><tr><th scope="col">Job</th><th scope="col">開始時間</th><th scope="col">耗時</th><th scope="col">結果</th><th scope="col">警告</th><th scope="col">花費</th><th scope="col">筆記</th></tr></thead>
 <tbody>
 ${runs.map(runRow).join('\n')}

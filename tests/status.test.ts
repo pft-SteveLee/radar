@@ -89,6 +89,23 @@ test('renderPage marks a failed run and shows its error', () => {
   assert.match(html, /CodiMD down/);
 });
 
+test('renderPage puts the error of a failed run in its own full-width row', () => {
+  const html = page([run({ status: 'failed', error: 'CodiMD login failed', url: null })]);
+
+  assert.match(html, /<td>失敗<\/td>/);
+  assert.match(
+    html,
+    /<tr class="failed"><td colspan="7" class="error">CodiMD login failed<\/td><\/tr>/,
+  );
+});
+
+test('renderPage tells narrow screens that the run table scrolls sideways', () => {
+  const html = page([run()]);
+
+  assert.match(html, /<caption>最近 1 次執行<span class="hint">（可左右捲動）<\/span><\/caption>/);
+  assert.match(html, /@media \(max-width: 40rem\) \{ \.hint \{ display: inline; \} \}/);
+});
+
 test('renderPage shows the number of warnings of a run', () => {
   assert.match(page([run({ warnings: ['a', 'b'] })]), /警告 2/);
 });

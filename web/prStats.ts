@@ -28,7 +28,7 @@ const COLORS = [
   '#db2777',
   '#65a30d',
 ];
-const CHART = { width: 800, height: 260, left: 32, right: 8, top: 8, bottom: 24 };
+const CHART = { width: 800, height: 260, left: 48, right: 8, top: 8, bottom: 24 };
 const GAP_LABEL_MIN_WIDTH = 80;
 
 const isDay = (value: string | null): value is string =>
@@ -184,7 +184,7 @@ function table(weeks: WeekCounts[], members: string[], currentWeek: string): str
     })
     .join('\n');
   return `<div class="scroll"><table>
-<caption>每週 merged PR 數，新的在上（— 表示該週尚未抓取）</caption>
+<caption>每週 merged PR 數，新的在上（— 表示該週尚未抓取）<span class="hint">（可左右捲動）</span></caption>
 <thead><tr><th scope="col">週</th>${header}<th scope="col">合計</th><th scope="col">人均</th></tr></thead>
 <tbody>
 ${rows}
@@ -229,6 +229,7 @@ export function renderPrPage({
 <style>
 ${BASE_CSS}
 svg { width: 100%; height: auto; font-size: 11px; fill: var(--muted); }
+@media (max-width: 40rem) { svg text { font-size: 20px; } }
 svg .axis { stroke: var(--line); }
 svg .gap { fill: var(--line); opacity: 0.5; }
 form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0 1rem; }

@@ -147,6 +147,13 @@ test('renderPrPage shows when the numbers were last updated, or that they never 
   assert.match(page(['alice'], { updatedAt: null }), /class="stale"[^>]*>尚無 pr_stats 成功紀錄/);
 });
 
+test('renderPrPage keeps chart text readable on a phone and hints that the table scrolls', () => {
+  const html = page(['alice']);
+
+  assert.match(html, /@media \(max-width: 40rem\) \{ svg text \{ font-size: 20px; \} \}/);
+  assert.match(html, /（— 表示該週尚未抓取）<span class="hint">（可左右捲動）<\/span>/);
+});
+
 test('renderPrPage says what is counted and that the count is no measure of contribution', () => {
   const html = page(['alice']);
 
