@@ -1,1 +1,2 @@
 30 7 * * * cd /app && node jobs/redditDigest.ts
+30 6 * * * cd /app && node jobs/prStats.ts

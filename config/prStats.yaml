@@ -1,0 +1,6 @@
+# Merged PRs of these orgs are counted per author and week (pr_stats job).
+orgs:
+  - perfect-corp
+# GitHub logins shown on /prs. Authors not listed here are stored but not shown,
+# so changing this list needs no refetch.
+members: []

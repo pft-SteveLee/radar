@@ -22,13 +22,26 @@ export function summarizeMonth(lines: CostLine[], now: Date): MonthSummary {
   return { month, totalUsd: byJob.reduce((total, entry) => total + entry.usd, 0), byJob };
 }
 
-const escapeHtml = (text: string) =>
+export const escapeHtml = (text: string) =>
   text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+
+export const BASE_CSS = `:root { --bg: #fafaf9; --text: #1c1917; --muted: #78716c; --line: #e7e5e4; --accent: #2563eb; --bad: #b91c1c; --bad-bg: #fee2e2; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #1c1917; --text: #f5f5f4; --muted: #a8a29e; --line: #44403c; --accent: #60a5fa; --bad: #fca5a5; --bad-bg: #450a0a; }
+}
+body { margin: 0 auto; max-width: 64rem; padding: 1rem; background: var(--bg); color: var(--text); font-family: system-ui, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif; line-height: 1.5; }
+h1 { font-size: 1.25rem; }
+h2 { font-size: 1.05rem; margin-top: 2rem; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+caption { text-align: left; color: var(--muted); padding-bottom: 0.5rem; }
+th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+a { color: var(--accent); }`;
 
 const dollars = (usd: number) => `$${usd.toFixed(2)}`;
 
@@ -94,28 +107,18 @@ ${runs.map(runRow).join('\n')}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>radar 狀態</title>
 <style>
-:root { --bg: #fafaf9; --text: #1c1917; --muted: #78716c; --line: #e7e5e4; --accent: #2563eb; --bad: #b91c1c; --bad-bg: #fee2e2; }
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #1c1917; --text: #f5f5f4; --muted: #a8a29e; --line: #44403c; --accent: #60a5fa; --bad: #fca5a5; --bad-bg: #450a0a; }
-}
-body { margin: 0 auto; max-width: 64rem; padding: 1rem; background: var(--bg); color: var(--text); font-family: system-ui, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif; line-height: 1.5; }
-h1 { font-size: 1.25rem; }
-h2 { font-size: 1.05rem; margin-top: 2rem; }
+${BASE_CSS}
 progress { width: 100%; height: 0.75rem; accent-color: var(--accent); }
-.scroll { overflow-x: auto; }
-table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
-caption { text-align: left; color: var(--muted); padding-bottom: 0.5rem; }
-th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
 tr.failed { background: var(--bad-bg); color: var(--bad); }
 .freshness { list-style: none; padding: 0; }
 .freshness li { padding: 0.4rem 0.6rem; }
 .freshness li.stale { background: var(--bad-bg); color: var(--bad); font-weight: 600; }
 .error { word-break: break-word; }
-a { color: var(--accent); }
 </style>
 </head>
 <body>
 <h1>radar 狀態</h1>
+<p><a href="/prs">PR 趨勢</a></p>
 <ul class="freshness">
 ${freshness}
 </ul>

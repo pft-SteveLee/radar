@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
+import { isoWeek } from '../jobs/prStats.ts';
 import { createStatusServer } from '../web/statusServer.ts';
 
 let outputDir: string;
@@ -48,6 +49,35 @@ test('GET / works before any job has run', async () => {
 
   assert.equal(response.status, 200);
   assert.match(await response.text(), /尚無執行紀錄/);
+});
+
+test('GET /prs shows the stored weekly counts of the configured members', async () => {
+  const configDir = mkdtempSync(join(tmpdir(), 'radar-config-'));
+  process.env.CONFIG_DIR = configDir;
+  writeFileSync(join(configDir, 'prStats.yaml'), 'orgs: [perfect-corp]\nmembers: [alice]\n');
+  const today = new Date().toLocaleDateString('sv', { timeZone: 'Asia/Taipei' });
+  const week = isoWeek(today);
+  mkdirSync(join(outputDir, 'prStats'));
+  writeFileSync(
+    join(outputDir, 'prStats', `${week}.json`),
+    JSON.stringify({ week, fetchedAt: today, counts: { alice: 7, outsider: 3 } }),
+  );
+
+  const response = await fetch(`${baseUrl}/prs?weeks=12`);
+  const html = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(html, new RegExp(`<th scope="row">${week}</th><td>7</td>`));
+  assert.doesNotMatch(html, /outsider/);
+});
+
+test('GET /prs with a bad query or no config still answers with a page', async () => {
+  process.env.CONFIG_DIR = mkdtempSync(join(tmpdir(), 'radar-config-'));
+
+  const response = await fetch(`${baseUrl}/prs?from=nope&weeks=999`);
+
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /請在 config\/prStats\.yaml 填 members/);
 });
 
 test('any other path is a 404', async () => {
