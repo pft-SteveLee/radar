@@ -114,6 +114,38 @@ test('an error that is not a SyntaxError is rethrown', async () => {
   await assert.rejects(triageItem(item, deps), new Error('API down'));
 });
 
+const longItem: ChangeItem = {
+  ...item,
+  text: Array.from(
+    { length: 40 },
+    (_, index) => `${String(index).padStart(2, '0')}${'x'.repeat(997)}\n`,
+  ).join(''),
+};
+const oneChange = (text: string) => ({ changes: [{ text, category: '修正', importance: 1 }] });
+
+test('a long item is split into chunks of at most 15000 characters, one Haiku call each, changes merged in order', async () => {
+  const { deps, calls } = triageDeps([
+    () => oneChange('first'),
+    () => oneChange('second'),
+    () => oneChange('third'),
+  ]);
+  const changes = await triageItem(longItem, deps);
+  assert.equal(calls.length, 3);
+  const texts = calls.map((callOptions) => (JSON.parse(callOptions.user) as { text: string }).text);
+  assert.ok(texts.every((text) => text.length <= 15_000));
+  assert.equal(texts.join(''), longItem.text);
+  assert.deepEqual(
+    changes?.map((change) => change.text),
+    ['first', 'second', 'third'],
+  );
+});
+
+test('a chunk with two invalid answers makes the whole item null', async () => {
+  const { deps, calls } = triageDeps([() => oneChange('first'), () => ({}), () => ({})]);
+  assert.equal(await triageItem(longItem, deps), null);
+  assert.equal(calls.length, 3);
+});
+
 const config: Config = {
   token: 'test-token',
   sources: [
@@ -336,4 +368,67 @@ test('a missing team context file adds a warning instead of failing', async () =
   const result = await run({ upload: true, config }, deps);
   assert.match(result.warnings.join('\n'), /changelogContext\.md/);
   assert.ok(readFileSync(join(outputDir, 'changelog', `${WEEK}.md`), 'utf8').length > 0);
+});
+
+test('a triage error for one source is a warning for that source, the others still run', async () => {
+  seedState();
+  const { world, deps, published } = makeWorld();
+  world.releases = [newRelease];
+  world.docsText = '# Docs\nnew line\n';
+  world.triage = (payload) => {
+    if (payload.source === 'tool') throw new Error('400 prompt is too long');
+    return { changes: [{ text: 'docs changed', category: '其他', importance: 1 }] };
+  };
+  const result = await run({ upload: true, config }, deps);
+  assert.match(result.warnings.join('\n'), /tool.*400 prompt is too long/);
+  assert.equal(published.length, 1);
+  assert.deepEqual(load('changelog/tool', null), SEEDED_TOOL);
+  assert.deepEqual(load('changelog/docs', null), { text: '# Docs\nnew line\n' });
+});
+
+test('a triage error for every source that needed triage fails the run', async () => {
+  seedState();
+  const { world, deps, published } = makeWorld();
+  world.releases = [newRelease];
+  world.docsText = '# Docs\nnew line\n';
+  world.triage = () => {
+    throw new Error('credit balance too low');
+  };
+  await assert.rejects(run({ upload: true, config }, deps), new Error('credit balance too low'));
+  assert.equal(published.length, 0);
+});
+
+test('more than 40 important changes: Sonnet gets the 40 most important, 棄用/價格 first, and a warning counts the rest', async () => {
+  seedState();
+  const { world, deps, calls } = makeWorld();
+  world.releases = [newRelease];
+  world.triage = () => ({
+    changes: [
+      ...Array.from({ length: 45 }, (_, index) => ({
+        text: `feature ${index}`,
+        category: '新功能',
+        importance: 1,
+      })),
+      { text: 'deprecation', category: '棄用', importance: 2 },
+      ...Array.from({ length: 4 }, (_, index) => ({
+        text: `big ${index}`,
+        category: '新功能',
+        importance: 3,
+      })),
+    ],
+  });
+  const result = await run({ upload: true, config }, deps);
+  const payload = JSON.parse(sonnetCalls(calls)[0].user) as {
+    urgent: { text: string }[];
+    others: { text: string }[];
+  };
+  assert.equal(payload.urgent.length + payload.others.length, 40);
+  assert.deepEqual(
+    payload.urgent.map((change) => change.text),
+    ['deprecation'],
+  );
+  const otherTexts = payload.others.map((change) => change.text);
+  assert.deepEqual(otherTexts.slice(0, 4), ['big 0', 'big 1', 'big 2', 'big 3']);
+  assert.ok(!otherTexts.includes('feature 44'));
+  assert.match(result.warnings.join('\n'), /10/);
 });

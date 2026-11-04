@@ -36,6 +36,8 @@ export interface Deps {
 
 const JOB = 'changelog_watch';
 const TRIAGE_ATTEMPTS = 2;
+const TRIAGE_CHUNK_CHARS = 15_000;
+const MAX_SUMMARY_CHANGES = 40;
 const MAX_IMPORTANCE = 3;
 
 const TRIAGE_SCHEMA = {
@@ -74,14 +76,41 @@ function parseChanges(answer: unknown): RawChange[] {
   return changes;
 }
 
+function splitText(text: string): string[] {
+  const chunks: string[] = [];
+  let current = '';
+  for (const line of text.split(/(?<=\n)/)) {
+    for (let start = 0; start < line.length; start += TRIAGE_CHUNK_CHARS) {
+      const piece = line.slice(start, start + TRIAGE_CHUNK_CHARS);
+      if (current.length + piece.length > TRIAGE_CHUNK_CHARS) {
+        chunks.push(current);
+        current = '';
+      }
+      current += piece;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
 export async function triageItem(item: ChangeItem, deps: Deps): Promise<Change[] | null> {
+  const changes: Change[] = [];
+  for (const chunk of splitText(item.text)) {
+    const chunkChanges = await triageChunk(item, chunk, deps);
+    if (!chunkChanges) return null;
+    changes.push(...chunkChanges);
+  }
+  return changes;
+}
+
+async function triageChunk(item: ChangeItem, text: string, deps: Deps): Promise<Change[] | null> {
   for (let attempt = 1; attempt <= TRIAGE_ATTEMPTS; attempt++) {
     try {
       const answer = await deps.call({
         job: JOB,
         model: MODELS.haiku,
         system: readPrompt('changelogTriage.md'),
-        user: JSON.stringify({ source: item.source, title: item.title, text: item.text }),
+        user: JSON.stringify({ source: item.source, title: item.title, text }),
         schema: TRIAGE_SCHEMA,
       });
       return parseChanges(answer).map((raw) => ({
@@ -129,8 +158,9 @@ function readContext(): string | null {
   }
 }
 
+const isUrgent = (change: Change) => change.category === '棄用' || change.category === '價格';
+
 async function summarize(significant: Change[], context: string | null, deps: Deps) {
-  const isUrgent = (change: Change) => change.category === '棄用' || change.category === '價格';
   const system = [readPrompt('changelogSummary.md'), context && `## 團隊背景\n\n${context}`]
     .filter(Boolean)
     .join('\n\n');
@@ -157,7 +187,9 @@ export async function run(
   const newChanges: Change[] = [];
   const newBaselines: string[] = [];
   const nextStates: { id: string; state: unknown }[] = [];
+  const triageErrors: Error[] = [];
   let failedSources = 0;
+  let triagedSources = 0;
 
   for (const source of config.sources) {
     let result: CollectResult;
@@ -177,7 +209,17 @@ export async function run(
     const sourceChanges: Change[] = [];
     let triaged = true;
     for (const item of result.items) {
-      const itemChanges = await triageItem(item, deps);
+      let itemChanges: Change[] | null;
+      try {
+        itemChanges = await triageItem(item, deps);
+      } catch (error) {
+        triageErrors.push(error as Error);
+        warnings.push(
+          `${source.id}: 篩選「${item.title}」失敗：${(error as Error).message}，下次執行會再試一次`,
+        );
+        triaged = false;
+        break;
+      }
       if (!itemChanges) {
         warnings.push(
           `${source.id}: Haiku 篩選連續兩次回傳無效格式，「${item.title}」下次執行會再試一次`,
@@ -188,21 +230,30 @@ export async function run(
       sourceChanges.push(...itemChanges);
     }
     if (!triaged) continue;
+    if (result.items.length) triagedSources++;
     newChanges.push(...sourceChanges);
     nextStates.push({ id: source.id, state: result.nextState });
     if (result.baseline) newBaselines.push(source.id);
   }
   if (failedSources === config.sources.length) throw new Error(warnings[0]);
+  if (triageErrors.length && triagedSources === 0) throw triageErrors[0];
 
   const stored = load<WeekFile>(weekStateName(week), { changes: [], baselined: [] });
   const changes = [...stored.changes, ...newChanges];
   const baselined = [...new Set([...stored.baselined, ...newBaselines])];
-  const significant = changes.filter((change) => change.importance >= SUMMARY_MIN_IMPORTANCE);
+  const significant = changes
+    .filter((change) => change.importance >= SUMMARY_MIN_IMPORTANCE)
+    .sort((a, b) => Number(isUrgent(b)) - Number(isUrgent(a)) || b.importance - a.importance);
+  const selected = significant.slice(0, MAX_SUMMARY_CHANGES);
+  if (significant.length > selected.length)
+    warnings.push(
+      `本週有 ${significant.length} 項重要變更，週報只列出最重要的 ${selected.length} 項，另外 ${significant.length - selected.length} 項未列入`,
+    );
   const context = readContext();
   if (significant.length && context === null)
     warnings.push('找不到 config/changelogContext.md，「對我們的影響」會比較籠統');
 
-  const sections = [significant.length ? await summarize(significant, context, deps) : NO_UPDATES];
+  const sections = [significant.length ? await summarize(selected, context, deps) : NO_UPDATES];
   if (baselined.length) sections.push(`## 已建立基準\n\n${idList(baselined)}`);
   sections.push(`## 已檢查的來源\n\n${idList(checked)}`);
   const text = note({
