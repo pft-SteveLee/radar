@@ -530,3 +530,34 @@ test('the team context is part of the Haiku system prompt', async () => {
   const haiku = calls.find((callOptions) => callOptions.model === MODELS.haiku);
   assert.match(haiku?.system ?? '', /團隊使用 Orca ADE/);
 });
+
+test('importance 0 changes are listed in the triage result as not selected and never sent to Sonnet', async () => {
+  seedState();
+  const { world, deps, calls } = makeWorld();
+  world.releases = [newRelease];
+  world.triage = () => ({
+    changes: [
+      { text: 'kept', category: '新功能', importance: 2 },
+      { text: 'dropped by Haiku', category: '修正', importance: 0 },
+    ],
+  });
+  await run({ upload: false, config }, deps);
+  const file = JSON.parse(
+    readFileSync(join(outputDir, 'changelog', `${WEEK}.triage.json`), 'utf8'),
+  ) as { total: number; changes: { text: string; selected: boolean }[] };
+  assert.deepEqual(
+    file.changes.map(({ text, selected }) => [text, selected]),
+    [
+      ['kept', true],
+      ['dropped by Haiku', false],
+    ],
+  );
+  assert.equal(file.total, 1);
+  assert.doesNotMatch(sonnetCalls(calls)[0].user, /dropped by Haiku/);
+});
+
+test('the triage prompt asks Haiku to return importance 0 changes too', () => {
+  const prompt = readFileSync(join('prompts', 'changelogTriage.md'), 'utf8');
+  assert.doesNotMatch(prompt, /不要回傳|直接略過/);
+  assert.match(prompt, /重要度 0/);
+});
