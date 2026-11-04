@@ -320,11 +320,11 @@ if (import.meta.main) {
   });
   const date = values.date ?? new Date().toLocaleDateString('sv', { timeZone: 'Asia/Taipei' });
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`--date must be YYYY-MM-DD, got ${date}`);
-  const configFile = parseYaml(
-    readFileSync(join(process.env.CONFIG_DIR ?? 'config', 'reddit.yaml'), 'utf8'),
-  ) as { userAgent: string; topics: Record<string, string[]> };
-  await recordRun(JOB, () =>
-    run(
+  await recordRun(JOB, () => {
+    const configFile = parseYaml(
+      readFileSync(join(process.env.CONFIG_DIR ?? 'config', 'reddit.yaml'), 'utf8'),
+    ) as { userAgent: string; topics: Record<string, string[]> };
+    return run(
       {
         date,
         upload: !values['no-upload'],
@@ -340,6 +340,6 @@ if (import.meta.main) {
         call,
         publish,
       },
-    ),
-  );
+    );
+  });
 }

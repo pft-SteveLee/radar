@@ -102,7 +102,7 @@ a { color: var(--accent); }
 <h1>radar 狀態</h1>
 <h2>${summary.month} 花費</h2>
 <p>${dollars(summary.totalUsd)} / $${budgetUsd}（${percent}%）</p>
-<progress value="${summary.totalUsd}" max="${budgetUsd}" aria-label="本月花費佔額度"></progress>
+<progress value="${summary.totalUsd.toFixed(2)}" max="${budgetUsd}" aria-label="本月花費佔額度"></progress>
 <table>
 <caption>各 job 本月花費</caption>
 <thead><tr><th scope="col">Job</th><th scope="col">花費</th></tr></thead>

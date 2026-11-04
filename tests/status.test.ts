@@ -64,7 +64,7 @@ test('renderPage shows the month cost against the budget with a progress bar', (
   const html = page([]);
 
   assert.match(html, /\$12\.40 \/ \$100（12%）/);
-  assert.match(html, /<progress value="12\.4" max="100"/);
+  assert.match(html, /<progress value="12\.40" max="100"/);
 });
 
 test('renderPage lists the cost of every job this month', () => {

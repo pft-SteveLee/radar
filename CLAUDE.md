@@ -32,10 +32,13 @@ npm run digest -- --date 2026-11-04 --no-upload   # run the job without publishi
 
 Docker: `mkdir -p state output`, copy `.env.example` to `.env` and fill it, then `docker compose up -d --build`. Create `state/` and `output/` first: Docker would otherwise create them as root and the container's `node` user could not write. The Dockerfile deliberately avoids BuildKit-only features (`ADD --checksum`), because the dev machine has no BuildKit.
 
+Status page: the `web` service (same image, `node web/statusServer.ts`) serves `http://<host>:8080` on the LAN without login: this month's cost against the $100 budget, cost per job, and the last 30 runs with result, error, warnings, cost and note link. It only reads `output/cost.jsonl` and `output/runs.jsonl` (mounted read-only) and has no access to the Docker socket. Full job logs are not in it: use `docker compose logs -f jobs`.
+
 ## Architecture
 
 - `jobs/<name>.ts`: one file per job. It exports its steps plus a `run(options, deps)`, and the CLI at the bottom runs only under `import.meta.main`. `deps` (`fetch`, `sleep`, `now`, `call`, `publish`) is injected so tests never touch the network or the API.
 - `lib/claude.ts`: `call()` wraps the Messages API (system prompt cached, optional JSON schema via `output_config.format`) and appends every call to `output/cost.jsonl`; `runCost(job, since)` sums one run for the note footer. The price table is hard-coded there.
+- `lib/runLog.ts`: `recordRun(job, work)` wraps a job's CLI entry (config loading included) and appends one record to `output/runs.jsonl` for every run, also a failed one, then rethrows so the exit code stays non-zero. `run()` of a job returns `{ url, warnings }` for it. `web/status.ts` (pure page rendering and month totals in Asia/Taipei time) and `web/statusServer.ts` build the status page from those two files.
 - `lib/codimd.ts`: `publish(alias, markdown)`. See the next section.
 - `lib/state.ts`: JSON files under `STATE_DIR` (default `state/`), written atomically. `lib/render.ts`: note layout (title, `> ⚠️` warnings, body, cost line).
 - Directories come from env with these defaults: `STATE_DIR=state`, `OUTPUT_DIR=output`, `PROMPTS_DIR=prompts`, `CONFIG_DIR=config`. `state/`, `output/`, `config/`, `prompts/` are volumes in compose, so prompts and config change without a rebuild.

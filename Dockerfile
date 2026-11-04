@@ -15,6 +15,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY lib ./lib
 COPY jobs ./jobs
+COPY web ./web
 COPY config ./config
 COPY prompts ./prompts
 COPY crontab ./
