@@ -1,0 +1,10 @@
+services:
+  jobs:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - ./state:/app/state
+      - ./output:/app/output
+      - ./config:/app/config
+      - ./prompts:/app/prompts

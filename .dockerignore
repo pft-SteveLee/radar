@@ -1,0 +1,7 @@
+.git
+.claude
+.env
+node_modules
+state
+output
+tests

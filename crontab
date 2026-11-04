@@ -1,0 +1,1 @@
+30 7 * * * cd /app && node jobs/redditDigest.ts

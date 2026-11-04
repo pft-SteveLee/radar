@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Pre-implementation: the repo has no commits and no code yet. The only content is `t.md` (untracked, written in Traditional Chinese), the plan this project is built from. Build/lint/test commands do not exist yet; add them here once the first job lands. If `t.md` and the code disagree, ask which one is right.
+Stage 1 of 4 is built: shared `lib/` plus the `reddit_digest` job. `dev_weekly`, `changelog_watch` and `amp_compare` are still only planned in `t.md` (Traditional Chinese, the plan this project follows). If `t.md` and the code disagree, ask which one is right; the stack there was Python, the code is TypeScript.
 
 ## What this is
 
@@ -12,39 +12,49 @@ Pre-implementation: the repo has no commits and no code yet. The only content is
 
 | Job | Schedule (Asia/Taipei) | Models |
 | --- | --- | --- |
-| `reddit_digest` | daily 08:00 | Haiku 5.5 scores, Sonnet 5.5 summarizes |
+| `reddit_digest` (built) | daily 07:30, so the note exists before 08:00 | Haiku 5.5 scores, Sonnet 5.5 summarizes |
 | `dev_weekly` (GitHub PRs/issues) | Mon 09:00 | Sonnet 5.5; Opus 5.5 only for diffs of PRs with a short description (<50 words) and >100 changed lines |
 | `changelog_watch` (Claude Code, Claude API, Orca ADE, skills/plugin marketplaces) | Fri 09:00 | Haiku 5.5 diff triage, Sonnet 5.5 summary |
 | `amp_compare` (competitor feature matrix per AMP workspace) | monthly or manual | Sonnet extracts, Opus 5.5 aligns and analyzes, Fable 5.1 for `--deep` |
 
-## Planned architecture
+## Commands
 
-- `jobs/*.py`: one collector plus prompt per job. Run as `python -m jobs.<name>`; every job CLI takes a date, week or workspace argument (`--date`, `--week`, `--workspace`, `--deep`) so any run can be redone.
-- `lib/`: shared by all jobs: `claude.py` (Messages API wrapper, retry, cost logging), `codimd.py`, `state.py` (processed-id/hash cache), `render.py` (Markdown templates).
-- `prompts/` (one file per job), `config/` (`repos.yaml`, `changelog_sources.yaml`, `competitors.yaml`), `state/`, `output/`: mounted as volumes so prompts and config change without rebuilding the image.
-- One Docker image; `supercronic` reads `crontab` inside the container. Env vars: `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `CODIMD_URL`, `CODIMD_EMAIL`, `CODIMD_PASSWORD`, `TZ=Asia/Taipei`. Only `.env.example` is committed.
-- Pipeline for every job: collect, dedupe against `state/` (so only new content costs tokens), cheap-model filter, stronger-model write-up, save to `output/`, upload to CodiMD.
+Node 24 runs the TypeScript directly (type stripping, no build step), so only erasable syntax is allowed: no `enum`, no `namespace`. Import local files with the `.ts` extension.
+
+```
+npm test                                   # node:test, all of tests/
+node --test tests/redditRun.test.ts        # one file
+node --test --test-name-pattern="seen" tests/redditRun.test.ts   # one test by name
+npm run typecheck                          # tsc --noEmit
+npm run lint                               # biome check . ; add --write to fix
+npm run digest -- --date 2026-11-04 --no-upload   # run the job without publishing
+```
+
+Docker: `mkdir -p state output`, copy `.env.example` to `.env` and fill it, then `docker compose up -d --build`. Create `state/` and `output/` first: Docker would otherwise create them as root and the container's `node` user could not write. The Dockerfile deliberately avoids BuildKit-only features (`ADD --checksum`), because the dev machine has no BuildKit.
+
+## Architecture
+
+- `jobs/<name>.ts`: one file per job. It exports its steps plus a `run(options, deps)`, and the CLI at the bottom runs only under `import.meta.main`. `deps` (`fetch`, `sleep`, `now`, `call`, `publish`) is injected so tests never touch the network or the API.
+- `lib/claude.ts`: `call()` wraps the Messages API (system prompt cached, optional JSON schema via `output_config.format`) and appends every call to `output/cost.jsonl`; `runCost(job, since)` sums one run for the note footer. The price table is hard-coded there.
+- `lib/codimd.ts`: `publish(alias, markdown)`. See the next section.
+- `lib/state.ts`: JSON files under `STATE_DIR` (default `state/`), written atomically. `lib/render.ts`: note layout (title, `> ⚠️` warnings, body, cost line).
+- Directories come from env with these defaults: `STATE_DIR=state`, `OUTPUT_DIR=output`, `PROMPTS_DIR=prompts`, `CONFIG_DIR=config`. `state/`, `output/`, `config/`, `prompts/` are volumes in compose, so prompts and config change without a rebuild.
+- Pipeline of `reddit_digest`: collect feeds, drop seen ids and posts older than 48 hours, save `state/reddit/raw/<date>.json`, Haiku scores 50 at a time (two invalid answers give the batch score 0 plus a warning), Sonnet summarizes posts scoring 3 or more (given the previous 3 days of notes), write `output/reddit/<date>.md`, publish to alias `radar-reddit-<date>`.
+- Posts are marked seen only after the upload succeeds, so a failed run is picked up again by the next one. `--no-upload` never marks posts. `--date D` reuses `raw/D.json` when it exists instead of fetching again.
+
+## CodiMD
+
+CodiMD 2.5 has no HTTP endpoint that writes a named note. `publish()` logs in with email and password, opens the note once so it is created under the user, then writes through socket.io as one operation. This needs `socket.io-client@2.5.0` (the server speaks the old protocol; 4.x fails with "server error"), polling transport only, and the session cookie sent in `extraHeaders`. Pushed content is remembered in `state/codimd/<alias>.md`; if the note on the server differs from that, it was edited on the web and is not overwritten (`editedOnWeb`). The same mechanism is in `~/.claude-shared/scripts/codimd/push.mjs`. Credentials live only in `.env`.
 
 ## Constraints that shape the code
 
-- All model calls go through the Messages API or Agent SDK with the key from the linked Console org. Interactive Claude Code, the GitHub Action and IDE/desktop launches bill as Claude Code usage and are not covered by the credits.
-- Model tiers: Haiku classifies and filters first, Sonnet writes, Opus only where reading large diffs or making comparison judgments, Fable only for `amp_compare --deep`. Put the fixed part of each prompt (system prompt, format examples) first for prompt caching.
-- `lib/claude.py` appends every call (model, input/output tokens, estimated USD) to `output/cost.jsonl`, and each CodiMD note ends with that run's cost.
-- Reddit: RSS only (no API), custom User-Agent. GitHub sources: always the API, never scrape HTML. Page-to-text with `trafilatura` or `readability-lxml` so nav/footer changes do not trigger fake diffs.
-- A source that cannot be fetched (403, redesign) must be flagged at the top of that run's note, never silently skipped.
+- All model calls go through the Messages API with the key from the linked Console org. Interactive Claude Code, the GitHub Action and IDE/desktop launches bill as Claude Code usage and are not covered by the credits.
+- Model tiers: Haiku classifies and filters first, Sonnet writes, Opus only where reading large diffs or making comparison judgments, Fable only for `amp_compare --deep`.
+- Reddit feeds are RSS only, no API, with a custom User-Agent (do not put contact details in it). Without `limit` a feed returns only 25 entries, so every URL in `config/reddit.yaml` has `limit=100` (verified). Reddit answers 429 after about one request per minute without login; `collect` waits for `x-ratelimit-reset` plus one second and retries, so a full collection of 10 feeds takes about 9 minutes. Keep that in mind when scheduling anything after it.
+- GitHub sources must go through the API, never scraped HTML; page-to-text for other sources should use a readability library so nav/footer changes do not cause fake diffs.
+- A source that cannot be fetched must be flagged at the top of that run's note, never silently skipped.
 - Must run on a machine that can reach the internal CodiMD, not GitHub Actions.
-- Missed runs are back-filled from `state/last_run.json` at job startup.
-- Write the cheapest tests first: collectors and fake-data tests before calling the real API.
 
-## CodiMD publishing
+## Next stages
 
-`t.md` plans a `codimd.py` that logs in with email/password and POSTs to `/new`. The global setup notes (`~/.claude/CLAUDE.md` §10) say `POST /new/<alias>` returns 404 on this server and that named notes are written through the socket.io polling channel, as `~/.claude-shared/scripts/codimd/push.mjs` does. Check which works before implementing `codimd.py`. Credentials live only in `.env`, never in chat or docs.
-
-## Build order
-
-1. `lib/` plus Reddit, Dockerfile, compose, and cost logging
-2. Changelog watch
-3. Dev weekly
-4. AMP compare, starting with workspace `l10n`, then `edm`, `dah`
-
-Open items in `t.md`: competitor lists for `config/competitors.yaml`, repo list for `config/repos.yaml`, and the CodiMD URL and bot account.
+2. `changelog_watch`, 3. `dev_weekly`, 4. `amp_compare` (start with workspace `l10n`, then `edm`, `dah`). Open items in `t.md`: competitor lists for `config/competitors.yaml`, repo list for `config/repos.yaml`.
