@@ -67,8 +67,35 @@ test('GET /prs shows the stored weekly counts of the configured members', async 
   const html = await response.text();
 
   assert.equal(response.status, 200);
-  assert.match(html, new RegExp(`<th scope="row">${week}</th><td>7</td>`));
+  assert.match(html, new RegExp(`<th scope="row">${week}（進行中）</th><td>7</td>`));
+  assert.match(html, /尚無 pr_stats 成功紀錄/);
   assert.doesNotMatch(html, /outsider/);
+});
+
+test('GET /prs shows when pr_stats last succeeded, ignoring failed runs and other jobs', async () => {
+  const run = (job: string, status: string, startedAt: string) =>
+    JSON.stringify({
+      job,
+      startedAt,
+      finishedAt: startedAt,
+      status,
+      error: null,
+      warnings: [],
+      costUsd: 0,
+      url: null,
+    });
+  writeFileSync(
+    join(outputDir, 'runs.jsonl'),
+    `${[
+      run('pr_stats', 'ok', '2026-11-02T22:30:00.000Z'),
+      run('reddit_digest', 'ok', '2026-11-03T23:30:00.000Z'),
+      run('pr_stats', 'failed', '2026-11-03T22:30:00.000Z'),
+    ].join('\n')}\n`,
+  );
+
+  const html = await (await fetch(`${baseUrl}/prs`)).text();
+
+  assert.match(html, /資料更新於 2026-11-03 06:30/);
 });
 
 test('GET /prs with a bad query or no config still answers with a page', async () => {

@@ -89,6 +89,23 @@ test('renderPage marks a failed run and shows its error', () => {
   assert.match(html, /CodiMD down/);
 });
 
+test('renderPage puts the error of a failed run in its own full-width row', () => {
+  const html = page([run({ status: 'failed', error: 'CodiMD login failed', url: null })]);
+
+  assert.match(html, /<td>失敗<\/td>/);
+  assert.match(
+    html,
+    /<tr class="failed"><td colspan="7" class="error">CodiMD login failed<\/td><\/tr>/,
+  );
+});
+
+test('renderPage tells narrow screens that the run table scrolls sideways', () => {
+  const html = page([run()]);
+
+  assert.match(html, /<caption>最近 1 次執行<span class="hint">（可左右捲動）<\/span><\/caption>/);
+  assert.match(html, /@media \(max-width: 40rem\) \{ \.hint \{ display: inline; \} \}/);
+});
+
 test('renderPage shows the number of warnings of a run', () => {
   assert.match(page([run({ warnings: ['a', 'b'] })]), /警告 2/);
 });
@@ -137,4 +154,131 @@ test('renderPage flags a job that has never succeeded', () => {
   const html = page([run({ status: 'failed', error: 'x', url: null })]);
 
   assert.match(html, /class="stale"[^>]*>reddit_digest 尚無成功紀錄/);
+});
+
+test('renderPage declares light and dark form controls, landmarks and roomy links', () => {
+  const html = page([run()]);
+
+  assert.match(html, /color-scheme: light dark/);
+  assert.match(html, /<main>[\s\S]*<h1>radar 狀態<\/h1>[\s\S]*<\/main>/);
+  assert.match(html, /<nav aria-label="頁面"><a href="\/prs">PR 趨勢<\/a><\/nav>/);
+  assert.match(html, /nav a \{ display: inline-block; padding: 0\.4rem 0\.5rem; \}/);
+  assert.match(html, /nav strong \{ display: inline-block; padding: 0\.4rem 0\.5rem; \}/);
+  assert.match(html, /th\[scope="row"\] \{ white-space: nowrap; \}/);
+});
+
+test('renderPage keeps a link in a failed row readable on the red wash', () => {
+  assert.match(page([run()]), /tr\.failed a \{ color: inherit; text-decoration: underline; \}/);
+});
+
+test('renderPage gives the latest failure and the limit next to an overdue job', () => {
+  const html = page(
+    [
+      run({
+        status: 'failed',
+        error: 'CodiMD login failed: HTTP 502',
+        url: null,
+        startedAt: '2026-11-04T23:30:00.000Z',
+      }),
+      run(),
+    ],
+    12.4,
+    '2026-11-05T09:00:00Z',
+  );
+
+  assert.match(
+    html,
+    /class="stale"[^>]*>reddit_digest 上次成功：33 小時前（2026-11-04 07:30），已逾時（上限 26 小時），最近一次：2026-11-05 07:30 失敗：CodiMD login failed: HTTP 502/,
+  );
+});
+
+test('renderPage names the failure of a job that has never succeeded', () => {
+  const html = page([run({ status: 'failed', error: 'boom', url: null })]);
+
+  assert.match(html, /尚無成功紀錄，已逾時（上限 26 小時），最近一次：.*失敗：boom/);
+});
+
+test('renderPage shows no failure next to a job whose latest run succeeded', () => {
+  const html = page([
+    run(),
+    run({ status: 'failed', error: 'old', url: null, startedAt: '2026-11-02T00:00:00.000Z' }),
+  ]);
+
+  assert.doesNotMatch(html, /最近一次/);
+});
+
+test('renderPage lets the warnings of a run be opened and escapes them', () => {
+  const html = page([run({ warnings: ['feed <a> failed', 'second'] })]);
+
+  assert.match(html, /<details><summary>警告 2<\/summary><ul><li>feed &lt;a&gt; failed<\/li>/);
+});
+
+test('renderPage shows a spend under one percent as less than one percent, not 0', () => {
+  assert.match(page([], 0.23), /\$0\.23 \/ \$100（&lt;1%）/);
+  assert.match(page([], 0), /\$0\.00 \/ \$100（0%）/);
+});
+
+test('renderPage marks a spend above the budget in the correction color with words', () => {
+  assert.match(page([], 120), /class="over"[^>]*>\$120\.00 \/ \$100（120%），已超支 \$20\.00/);
+  assert.doesNotMatch(page([], 12.4), /class="over"/);
+});
+
+const pageWith = (runs: RunRecord[], byJob: { job: string; usd: number }[]) =>
+  renderPage({
+    summary: {
+      month: '2026-11',
+      totalUsd: byJob.reduce((total, entry) => total + entry.usd, 0),
+      byJob,
+    },
+    runs,
+    budgetUsd: 100,
+    now: new Date('2026-11-04T05:00:00Z'),
+    maxAgeHours: { reddit_digest: 26 },
+  });
+
+test('renderPage lists a job that has runs or cost but no freshness limit, without the error color', () => {
+  const html = pageWith(
+    [run(), run({ job: 'changelog_watch' })],
+    [
+      { job: 'reddit_digest', usd: 1 },
+      { job: 'dev_weekly', usd: 2 },
+    ],
+  );
+
+  assert.match(html, /<li class="unmonitored">changelog_watch 未設定新鮮度上限<\/li>/);
+  assert.match(html, /<li class="unmonitored">dev_weekly 未設定新鮮度上限<\/li>/);
+  assert.doesNotMatch(html, /reddit_digest 未設定/);
+  assert.doesNotMatch(html, /\.unmonitored \{[^}]*var\(--bad\)/);
+});
+
+test('renderPage keeps a long error out of the freshness line and in the run row', () => {
+  const error = 'x'.repeat(200);
+  const failed = run({
+    status: 'failed',
+    error,
+    url: null,
+    startedAt: '2026-11-04T23:30:00.000Z',
+  });
+  const html = page([failed, run()], 12.4, '2026-11-05T09:00:00Z');
+
+  assert.match(html, /<li class="stale">[^<]*失敗：x{80}…<\/li>/);
+  assert.match(html, /<td colspan="7" class="error">x{200}<\/td>/);
+});
+
+test('renderPage puts the cost table in a scroll container and says when nothing was spent', () => {
+  assert.match(page([run()]), /<div class="scroll"><table>\s*<caption>各 job 本月花費/);
+  assert.match(pageWith([], []), /本月尚無花費/);
+  assert.doesNotMatch(pageWith([], []), /各 job 本月花費/);
+});
+
+test('renderPage lets long text wrap, keeps targets roomy and aligns numbers', () => {
+  const html = page([run()]);
+
+  assert.match(html, /\.freshness li \{ padding: 0\.4rem 0\.6rem; overflow-wrap: anywhere; \}/);
+  assert.match(html, /td a \{ display: inline-block; min-height: 1\.5rem; white-space: nowrap; \}/);
+  assert.match(
+    html,
+    /summary \{ display: list-item; min-height: 1\.5rem; white-space: nowrap; cursor: pointer; \}/,
+  );
+  assert.match(html, /td \{ font-variant-numeric: tabular-nums; \}/);
 });

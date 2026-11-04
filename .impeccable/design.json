@@ -75,7 +75,7 @@
   ],
   "narrative": {
     "northStar": "The Lab Notebook",
-    "overview": "radar's pages are a researcher's notebook kept by a running experiment. Each page is a sheet: plain paper, ruled lines between rows, numbers written in ink, and a margin note in red where something went wrong. The data is the subject. Charts and tables carry the page, and nothing decorative competes with them.\n\nThe system is quiet by default and precise when it speaks. One ink (blue) marks what you can act on or follow: links and the budget meter. One correction color (red, on a pale red wash) marks what failed or went stale, and always comes with words that say so. Everything else is graphite on paper. Density is a working notebook's: compact data rows, generous gaps only between sections, one centered column.\n\nBoth themes come from the system: a light paper sheet and a dark one that follows prefers-color-scheme. Every color has a dark counterpart.",
+    "overview": "radar's pages are a researcher's notebook kept by a running experiment. Each page is a sheet: plain paper, ruled lines between rows, numbers written in ink, and a margin note in red where something went wrong. The data is the subject. Charts and tables carry the page, and nothing decorative competes with them.\n\nThe system is quiet by default and precise when it speaks. One ink (blue) marks what you can act on or follow: links and the budget meter. One correction color (red, on a pale red wash) marks what failed or went stale, and always comes with words that say so. Everything else is graphite on paper. Density is a working notebook's: compact data rows, generous gaps only between sections, one centered column.\n\nBoth themes come from the system: a light paper sheet and a dark one that follows prefers-color-scheme. Every color, including the chart series, has a dark counterpart, and the browser's own form controls follow the theme (color-scheme: light dark).",
     "keyCharacteristics": [
       "Flat sheets: no shadows, no rounded corners, no cards.",
       "Ruled rows: 1px dividers under each table row, not boxes.",
@@ -86,6 +86,7 @@
     "rules": [
       { "name": "The Correction Ink Rule", "body": "Red appears only where something failed or is overdue, and always next to words that say so (\"失敗\", \"已逾時\", \"尚無成功紀錄\"). Red is never decoration, emphasis or a brand color.", "section": "colors" },
       { "name": "The One Ink Rule", "body": "Blue is for links and the measured amount. It never marks a status or a heading.", "section": "colors" },
+      { "name": "The Dash Rule", "body": "An em dash means \"no value here\". Three places use it, and each says so in context: a week that was never fetched (the table caption explains it), a run with no warnings, and a run with no note link. It is never 0.", "section": "colors" },
       { "name": "The Small Step Rule", "body": "Headings are at most 1.25× body. A page is a sheet of notes, not a poster.", "section": "typography" },
       { "name": "The Flat Sheet Rule", "body": "Nothing floats. If something needs to stand out, give it the correction wash or a title, not a shadow.", "section": "elevation" }
     ],
@@ -94,13 +95,16 @@
       "Do show missing data as `—` in tables and as a gap in chart lines.",
       "Do give every chart a table with the same numbers, and an `aria-label` that names the measure and the range.",
       "Do keep tables inside a sideways-scrolling container, so the page itself never scrolls horizontally.",
-      "Do define a dark counterpart for any new color in the `prefers-color-scheme: dark` block."
+      "Do define a dark counterpart for any new color in the `prefers-color-scheme: dark` block.",
+      "Do mark data that is not final (the current week) and data that does not exist (unfetched weeks) differently from final numbers.",
+      "Do tell series apart by marker shape as well as by color."
     ],
     "donts": [
       "Don't add shadows, rounded corners or card containers. Rows are ruled, not boxed.",
       "Don't use ink blue for status, or correction red for anything that is not a failure or overdue.",
       "Don't add web fonts, icon fonts or client-side JavaScript. The pages must render as plain server HTML.",
-      "Don't treat the chart series red (`series-2`) as an alarm: it only identifies a line. Its closeness to correction red is a known tension in the current palette."
+      "Don't treat the chart series red (`series-2`) as an alarm: it only identifies a line. Its closeness to correction red is a known tension in the current palette.",
+      "Don't add a chart line that is a rescaled copy of another (such as an average next to a total). Put derived numbers in the table."
     ]
   }
 }

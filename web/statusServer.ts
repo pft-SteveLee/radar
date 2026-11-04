@@ -37,10 +37,17 @@ function statusPage(): string {
 function prPage(query: URLSearchParams): string {
   const today = new Date().toLocaleDateString('sv', { timeZone: 'Asia/Taipei' });
   const range = parseRange(query, today);
+  const lastSuccess = readRuns(Number.POSITIVE_INFINITY).find(
+    (run) => run.job === 'pr_stats' && run.status === 'ok',
+  );
   return renderPrPage({
     weeks: readWeeks(weeksBetween(range.from, range.to)),
     members: prMembers(),
     range,
+    today,
+    now: new Date(),
+    maxAgeHours: MAX_AGE_HOURS.pr_stats,
+    updatedAt: lastSuccess?.startedAt ?? null,
   });
 }
 
