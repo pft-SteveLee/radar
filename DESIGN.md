@@ -131,7 +131,7 @@ A warm stone neutral ground with a single blue ink and a single red correction c
 
 ### Chart Series
 
-- **Series 1–8** (`series-1` … `series-8`, each with a `-dark` version): one color per line on the PR charts, assigned in member order and cycled after eight. They are CSS variables (`--s1` … `--s8`), switched by the dark block. On the team chart there is one line, the total, in series 1. These colors identify lines. They carry no status meaning, and they never carry identity alone: each series also has its own marker shape (see Line Chart).
+- **Series 1–8** (`series-1` … `series-8`, each with a `-dark` version): one color per line on the PR charts, assigned in member order and cycled after eight. They are CSS variables (`--s1` … `--s8`), switched by the dark block. On the team chart there is one line, the total, in series 1. These colors identify lines. They carry no status meaning, and they never carry identity alone: each series also has its own marker shape (see Line Chart). The shape cycles through four forms and moves one step further after every eight series, so the first 32 series all differ in color, shape or both.
 
 ### Named Rules
 
@@ -202,27 +202,30 @@ A plain list at the top of the status page, one line per job: "{job} 上次成�
 
 - **Normal:** body text with no marker.
 - **Stale:** correction wash, correction red, weight 600, ending with "，已逾時（上限 N 小時）".
-- **Latest failure:** when a run failed after the last success, the line ends with "，最近一次：time 失敗：error", in either state.
+- **Latest failure:** when a run failed after the last success, the line ends with "，最近一次：time 失敗：error", in either state. The error is cut to its first 80 characters; the full text sits in the run log row.
+- **Unmonitored job:** a job that has runs or cost but no limit gets a neutral muted line, "{job} 未設定新鮮度上限". It is never red: it says that nothing is watching, not that something is wrong.
+- **On `/prs`:** one line, "資料更新於 time", takes the same stale style, ending "，已逾時（上限 N 小時）", when `pr_stats` last succeeded longer ago than its limit.
 
 ### Budget Meter
 
-A native `<progress>` bar: full width, 0.75rem high, ink blue via `accent-color`. It sits right under the "$spent / $100（N%）" line, which states the same number in text. A spend under 1% reads "<1%", not 0%. Above the budget the line turns correction red, bold, and ends with "，已超支".
+A native `<progress>` bar: full width, 0.75rem high, ink blue via `accent-color`. It sits right under the "$spent / $100（N%）" line, which states the same number in text. A spend under 1% reads "<1%", not 0%. Above the budget the line turns correction red, bold, and ends with "，已超支 $X" (the amount over). The native bar only fills, so the amount is stated in text.
 
 ### Line Chart
 
 A hand-drawn inline SVG with `role="img"` and an `aria-label` that names the measure and the week range.
 
-- **Axes:** one baseline in pencil gray (dark enough to read as a graphic), with the maximum and 0 in pencil gray on the left and the first and last week below. On a phone the axis text grows to 20 units so it stays readable.
+- **Axes:** one baseline in pencil gray (dark enough to read as a graphic), with the maximum and 0 in pencil gray on the left and the first and last week below. On a phone the axis text grows to 20 units so it stays readable, and the left margin grows with the number of digits of the maximum so a four-digit label is never cut.
 - **Lines:** 2px strokes in series colors. A line breaks at a week that has no data instead of dropping to zero.
 - **Current week:** the last segment is dashed and its marker is hollow, with "（進行中）" in its `<title>`.
 - **Unfetched weeks:** a stretch of weeks with no data is a pale band labelled 「未抓取」 (the label is dropped when the band is narrow).
-- **Points:** a marker per value, circle, square, diamond or triangle by series order. Each carries a `<title>` with "{name} {week}: {value}".
+- **Truncated week:** a week the GitHub search cut short (more than 1000 results) is marked 「（已截斷，數字偏低）」 in the table and in the point titles, because its counts are too low.
+- **Points:** a marker per value, circle, square, diamond or triangle by series order (moving one step on after every eight series). Each carries a `<title>` with "{name} {week}: {value}".
 - **Legend:** an unstyled list under the chart, each item the series marker followed by the name.
 - **Pairing:** every chart has a table on the same page with the same numbers.
 
 ### Range Picker
 
-Links for 12 / 26 / 52 weeks in a labelled `<nav>`, with the active choice in bold and `aria-current="true"` instead of a link. Below them, a native GET form with two `type="date"` inputs (no later than today) and a native submit button, in a wrapping flex row with 0.5rem gaps. Native controls are left unstyled except for a 2rem minimum height. When the requested range is invalid, a line says so and names the range shown instead.
+Links for 12 / 26 / 52 weeks in a labelled `<nav>`, with the active choice in bold and `aria-current="true"` instead of a link. Below them, a native GET form with two `type="date"` inputs (no later than today) and a native submit button, in a wrapping flex row with 0.5rem gaps. Native controls are left unstyled except for a 2rem minimum height. When the requested range is invalid, a bold line in the normal text color says so and names the range shown instead; it is not an error state, so it does not use correction red.
 
 ### Links
 

@@ -45,7 +45,9 @@ a { color: var(--accent); }
 nav a { display: inline-block; padding: 0.4rem 0.5rem; }
 nav strong { display: inline-block; padding: 0.4rem 0.5rem; }
 th[scope="row"] { white-space: nowrap; }
-td a { white-space: nowrap; }
+td a { display: inline-block; min-height: 1.5rem; white-space: nowrap; }
+td { font-variant-numeric: tabular-nums; }
+summary { display: list-item; min-height: 1.5rem; white-space: nowrap; cursor: pointer; }
 input, button { min-height: 2rem; font: inherit; }
 .hint { display: none; }
 @media (max-width: 40rem) { .hint { display: inline; } }`;
@@ -83,6 +85,10 @@ interface PageInput {
   maxAgeHours: Record<string, number>;
 }
 
+const ERROR_PREVIEW_LENGTH = 80;
+const shorten = (text: string, limit: number) =>
+  text.length > limit ? `${text.slice(0, limit)}…` : text;
+
 function freshnessItem(job: string, limitHours: number, runs: RunRecord[], now: Date): string {
   const lastSuccess = runs.find((run) => run.job === job && run.status === 'ok');
   const lastFailure = runs.find(
@@ -92,7 +98,7 @@ function freshnessItem(job: string, limitHours: number, runs: RunRecord[], now: 
       (!lastSuccess || Date.parse(run.startedAt) > Date.parse(lastSuccess.startedAt)),
   );
   const reason = lastFailure
-    ? `，最近一次：${taipeiTime(lastFailure.startedAt)} 失敗：${escapeHtml(lastFailure.error || '無錯誤訊息')}`
+    ? `，最近一次：${taipeiTime(lastFailure.startedAt)} 失敗：${escapeHtml(shorten(lastFailure.error || '無錯誤訊息', ERROR_PREVIEW_LENGTH))}`
     : '';
   const overdue = `，已逾時（上限 ${limitHours} 小時）`;
   if (!lastSuccess)
@@ -114,16 +120,33 @@ function budgetLine(totalUsd: number, budgetUsd: number): string {
   const ratio = (totalUsd / budgetUsd) * 100;
   const percent = totalUsd > 0 && ratio < 1 ? '&lt;1' : String(Math.round(ratio));
   const text = `${dollars(totalUsd)} / $${budgetUsd}（${percent}%）`;
-  return totalUsd > budgetUsd ? `<p class="over">${text}，已超支</p>` : `<p>${text}</p>`;
+  return totalUsd > budgetUsd
+    ? `<p class="over">${text}，已超支 ${dollars(totalUsd - budgetUsd)}</p>`
+    : `<p>${text}</p>`;
 }
 
 export function renderPage({ summary, runs, budgetUsd, now, maxAgeHours }: PageInput): string {
-  const freshness = Object.entries(maxAgeHours)
-    .map(([job, limitHours]) => freshnessItem(job, limitHours, runs, now))
-    .join('\n');
+  const monitored = Object.entries(maxAgeHours).map(([job, limitHours]) =>
+    freshnessItem(job, limitHours, runs, now),
+  );
+  const unmonitored = [
+    ...new Set([...runs.map((run) => run.job), ...summary.byJob.map((entry) => entry.job)]),
+  ]
+    .filter((job) => !(job in maxAgeHours))
+    .map((job) => `<li class="unmonitored">${escapeHtml(job)} 未設定新鮮度上限</li>`);
+  const freshness = [...monitored, ...unmonitored].join('\n');
   const jobRows = summary.byJob
     .map((entry) => `<tr><td>${escapeHtml(entry.job)}</td><td>${dollars(entry.usd)}</td></tr>`)
     .join('\n');
+  const costTable = summary.byJob.length
+    ? `<div class="scroll"><table>
+<caption>各 job 本月花費</caption>
+<thead><tr><th scope="col">Job</th><th scope="col">花費</th></tr></thead>
+<tbody>
+${jobRows}
+</tbody>
+</table></div>`
+    : '<p>本月尚無花費</p>';
   const runTable = runs.length
     ? `<div class="scroll"><table>
 <caption>最近 ${runs.length} 次執行<span class="hint">（可左右捲動）</span></caption>
@@ -146,7 +169,8 @@ progress { width: 100%; height: 0.75rem; accent-color: var(--accent); }
 tr.failed { background: var(--bad-bg); color: var(--bad); }
 tr.failed a { color: inherit; text-decoration: underline; }
 .freshness { list-style: none; padding: 0; }
-.freshness li { padding: 0.4rem 0.6rem; }
+.freshness li { padding: 0.4rem 0.6rem; overflow-wrap: anywhere; }
+.freshness li.unmonitored { color: var(--muted); }
 .freshness li.stale { background: var(--bad-bg); color: var(--bad); font-weight: 600; }
 .error { word-break: break-word; }
 .over { color: var(--bad); font-weight: 600; }
@@ -162,13 +186,7 @@ ${freshness}
 <h2>${summary.month} 花費</h2>
 ${budgetLine(summary.totalUsd, budgetUsd)}
 <progress value="${summary.totalUsd.toFixed(2)}" max="${budgetUsd}" aria-label="本月花費佔額度"></progress>
-<table>
-<caption>各 job 本月花費</caption>
-<thead><tr><th scope="col">Job</th><th scope="col">花費</th></tr></thead>
-<tbody>
-${jobRows}
-</tbody>
-</table>
+${costTable}
 <h2>執行紀錄</h2>
 ${runTable}
 </main>

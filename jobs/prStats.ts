@@ -28,6 +28,7 @@ export interface WeekFile {
   week: string;
   fetchedAt: string;
   counts: Record<string, number>;
+  truncated?: true;
 }
 
 const toDate = (day: string) => new Date(`${day}T00:00:00Z`);
@@ -98,7 +99,7 @@ export async function fetchWeek(
   week: string,
   config: Config,
   deps: Deps,
-): Promise<{ counts: Record<string, number>; warnings: string[] }> {
+): Promise<{ counts: Record<string, number>; warnings: string[]; truncated: boolean }> {
   const monday = weekStart(week);
   const sunday = toDay(new Date(toDate(monday).getTime() + 6 * DAY_MS));
   const orgs = config.orgs.map((org) => `org:${org}`).join(' ');
@@ -123,11 +124,12 @@ export async function fetchWeek(
     }
     const reachable = Math.min(result.total_count, SEARCH_RESULT_LIMIT);
     if (result.items.length < PAGE_SIZE || page * PAGE_SIZE >= reachable) {
-      if (result.total_count > SEARCH_RESULT_LIMIT)
+      const truncated = result.total_count > SEARCH_RESULT_LIMIT;
+      if (truncated)
         warnings.push(
           `${week}: ${result.total_count} merged PRs, only the first ${SEARCH_RESULT_LIMIT} were counted`,
         );
-      return { counts, warnings };
+      return { counts, warnings, truncated };
     }
   }
 }
@@ -144,7 +146,12 @@ export async function run(
     try {
       const result = await fetchWeek(week, options.config, deps);
       warnings.push(...result.warnings);
-      const file: WeekFile = { week, fetchedAt: deps.now().toISOString(), counts: result.counts };
+      const file: WeekFile = {
+        week,
+        fetchedAt: deps.now().toISOString(),
+        counts: result.counts,
+        ...(result.truncated && { truncated: true as const }),
+      };
       save(`prStats/${week}`, file, process.env.OUTPUT_DIR ?? 'output');
     } catch (error) {
       errors.push(`${week}: ${(error as Error).message}`);

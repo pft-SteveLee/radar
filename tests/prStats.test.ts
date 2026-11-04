@@ -78,7 +78,7 @@ test('fetchWeek searches merged PRs of the org within the Taipei week and counts
 
   const result = await fetchWeek('2026-W45', config, deps);
 
-  assert.deepEqual(result, { counts: { alice: 2, bob: 1 }, warnings: [] });
+  assert.deepEqual(result, { counts: { alice: 2, bob: 1 }, warnings: [], truncated: false });
   const query = new URL(urls[0]).searchParams.get('q');
   assert.equal(
     query,
@@ -112,6 +112,7 @@ test('fetchWeek warns when the week has more results than the search can return'
 
   assert.equal(urls.length, 10);
   assert.equal(result.counts.alice, 1000);
+  assert.equal(result.truncated, true);
   assert.match(result.warnings[0], /2026-W45.*1500.*1000/);
 });
 
@@ -155,6 +156,17 @@ test('run stores the counts of every week in the range and replaces an older fil
   await run({ from: '2026-11-04', to: '2026-11-04', config }, rerun.deps);
   const replaced = JSON.parse(readFileSync(join(outputDir, 'prStats', '2026-W45.json'), 'utf8'));
   assert.deepEqual(replaced.counts, { dave: 1 });
+});
+
+test('run marks a week file as truncated only when the search cut the week short', async () => {
+  const fullPage = Array.from({ length: 100 }, () => 'alice');
+  const { deps } = fakeDeps(Array.from({ length: 10 }, () => () => searchPage(fullPage, 1500)));
+
+  await run({ from: '2026-11-04', to: '2026-11-04', config }, deps);
+
+  const stored = JSON.parse(readFileSync(join(outputDir, 'prStats', '2026-W45.json'), 'utf8'));
+  assert.equal(stored.truncated, true);
+  assert.equal(stored.counts.alice, 1000);
 });
 
 test('run keeps going and warns when one week fails, but fails when every week fails', async () => {

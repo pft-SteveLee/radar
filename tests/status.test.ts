@@ -219,6 +219,66 @@ test('renderPage shows a spend under one percent as less than one percent, not 0
 });
 
 test('renderPage marks a spend above the budget in the correction color with words', () => {
-  assert.match(page([], 120), /class="over"[^>]*>\$120\.00 \/ \$100（120%），已超支/);
+  assert.match(page([], 120), /class="over"[^>]*>\$120\.00 \/ \$100（120%），已超支 \$20\.00/);
   assert.doesNotMatch(page([], 12.4), /class="over"/);
+});
+
+const pageWith = (runs: RunRecord[], byJob: { job: string; usd: number }[]) =>
+  renderPage({
+    summary: {
+      month: '2026-11',
+      totalUsd: byJob.reduce((total, entry) => total + entry.usd, 0),
+      byJob,
+    },
+    runs,
+    budgetUsd: 100,
+    now: new Date('2026-11-04T05:00:00Z'),
+    maxAgeHours: { reddit_digest: 26 },
+  });
+
+test('renderPage lists a job that has runs or cost but no freshness limit, without the error color', () => {
+  const html = pageWith(
+    [run(), run({ job: 'changelog_watch' })],
+    [
+      { job: 'reddit_digest', usd: 1 },
+      { job: 'dev_weekly', usd: 2 },
+    ],
+  );
+
+  assert.match(html, /<li class="unmonitored">changelog_watch 未設定新鮮度上限<\/li>/);
+  assert.match(html, /<li class="unmonitored">dev_weekly 未設定新鮮度上限<\/li>/);
+  assert.doesNotMatch(html, /reddit_digest 未設定/);
+  assert.doesNotMatch(html, /\.unmonitored \{[^}]*var\(--bad\)/);
+});
+
+test('renderPage keeps a long error out of the freshness line and in the run row', () => {
+  const error = 'x'.repeat(200);
+  const failed = run({
+    status: 'failed',
+    error,
+    url: null,
+    startedAt: '2026-11-04T23:30:00.000Z',
+  });
+  const html = page([failed, run()], 12.4, '2026-11-05T09:00:00Z');
+
+  assert.match(html, /<li class="stale">[^<]*失敗：x{80}…<\/li>/);
+  assert.match(html, /<td colspan="7" class="error">x{200}<\/td>/);
+});
+
+test('renderPage puts the cost table in a scroll container and says when nothing was spent', () => {
+  assert.match(page([run()]), /<div class="scroll"><table>\s*<caption>各 job 本月花費/);
+  assert.match(pageWith([], []), /本月尚無花費/);
+  assert.doesNotMatch(pageWith([], []), /各 job 本月花費/);
+});
+
+test('renderPage lets long text wrap, keeps targets roomy and aligns numbers', () => {
+  const html = page([run()]);
+
+  assert.match(html, /\.freshness li \{ padding: 0\.4rem 0\.6rem; overflow-wrap: anywhere; \}/);
+  assert.match(html, /td a \{ display: inline-block; min-height: 1\.5rem; white-space: nowrap; \}/);
+  assert.match(
+    html,
+    /summary \{ display: list-item; min-height: 1\.5rem; white-space: nowrap; cursor: pointer; \}/,
+  );
+  assert.match(html, /td \{ font-variant-numeric: tabular-nums; \}/);
 });

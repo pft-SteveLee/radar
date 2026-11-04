@@ -45,6 +45,8 @@ function prPage(query: URLSearchParams): string {
     members: prMembers(),
     range,
     today,
+    now: new Date(),
+    maxAgeHours: MAX_AGE_HOURS.pr_stats,
     updatedAt: lastSuccess?.startedAt ?? null,
   });
 }

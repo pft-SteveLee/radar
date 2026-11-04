@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { parseRange, renderPrPage } from '../web/prStats.ts';
 
 const TODAY = '2026-11-04';
+const NOW = new Date('2026-11-04T05:00:00Z');
 const range = (query: string) => parseRange(new URLSearchParams(query), TODAY);
 const DEFAULT_RANGE = { from: '2026-05-13', to: TODAY, weeks: 26, invalid: false };
 
@@ -58,6 +59,8 @@ const page = (
     members,
     range: { from: '2026-10-19', to: TODAY, weeks: null, invalid: overrides.invalid ?? false },
     today: TODAY,
+    now: NOW,
+    maxAgeHours: 26,
     updatedAt: overrides.updatedAt === undefined ? '2026-11-03T22:30:00.000Z' : overrides.updatedAt,
   });
 
@@ -147,12 +150,76 @@ test('renderPrPage shows when the numbers were last updated, or that they never 
   assert.match(page(['alice'], { updatedAt: null }), /class="stale"[^>]*>尚無 pr_stats 成功紀錄/);
 });
 
+test('renderPrPage flags numbers that are older than the limit of the pr_stats job', () => {
+  const html = page(['alice'], { updatedAt: '2026-11-02T22:30:00.000Z' });
+
+  assert.match(html, /class="stale"[^>]*>資料更新於 2026-11-03 06:30，已逾時（上限 26 小時）/);
+  assert.doesNotMatch(page(['alice']), /已逾時/);
+});
+
+test('renderPrPage marks a week the search cut short in the table, the chart and the caption', () => {
+  const html = renderPrPage({
+    weeks: [
+      { week: '2026-W43', counts: { alice: 1000 }, truncated: true },
+      { week: '2026-W44', counts: { alice: 3 } },
+    ],
+    members: ['alice'],
+    range: { from: '2026-10-19', to: TODAY, weeks: null, invalid: false },
+    today: TODAY,
+    now: NOW,
+    maxAgeHours: 26,
+    updatedAt: '2026-11-04T01:00:00.000Z',
+  });
+
+  assert.match(html, /<th scope="row">2026-W43（已截斷，數字偏低）<\/th>/);
+  assert.match(html, /<title>alice 2026-W43（已截斷，數字偏低）: 1000<\/title>/);
+  assert.doesNotMatch(html, /2026-W44（已截斷/);
+});
+
+test('renderPrPage keeps the series apart beyond eight members by moving the shape on every round', () => {
+  const names = Array.from({ length: 10 }, (_, index) => `m${index + 1}`);
+  const html = page(names);
+  const shapeOf = (name: string) =>
+    html.match(new RegExp(`<li><svg[^>]*>.*?data-shape="(\\w+)".*?</svg>${name}</li>`))?.[1];
+
+  assert.equal(shapeOf('m1'), 'circle');
+  assert.equal(shapeOf('m9'), 'square');
+  assert.equal(shapeOf('m2'), 'square');
+  assert.equal(shapeOf('m10'), 'diamond');
+});
+
+test('renderPrPage makes room on the left of the chart for a four digit maximum', () => {
+  const axisStart = (html: string) => Number(html.match(/<line x1="(\d+)"[^>]*class="axis"/)?.[1]);
+  const wide = renderPrPage({
+    weeks: [{ week: '2026-W44', counts: { alice: 1240 } }],
+    members: ['alice'],
+    range: { from: '2026-10-26', to: TODAY, weeks: null, invalid: false },
+    today: TODAY,
+    now: NOW,
+    maxAgeHours: 26,
+    updatedAt: null,
+  });
+
+  assert.ok(axisStart(wide) > axisStart(page(['alice'])));
+});
+
+test('renderPrPage words the invalid range notice without the error color, and keeps gap labels readable', () => {
+  const html = page(['alice'], { invalid: true });
+
+  assert.match(html, /\.notice \{ font-weight: 600; \}/);
+  assert.doesNotMatch(html, /\.notice \{[^}]*var\(--bad\)/);
+  assert.match(html, /<text[^>]*class="gap-label"[^>]*>未抓取<\/text>/);
+  assert.match(html, /svg\.chart \.gap-label \{ fill: var\(--text\); \}/);
+});
+
 test('renderPrPage has landmarks and marks the chosen range as current', () => {
   const html = renderPrPage({
     weeks: [{ week: '2026-W45', counts: { alice: 1 } }],
     members: ['alice'],
     range: { from: '2026-05-13', to: TODAY, weeks: 26, invalid: false },
     today: TODAY,
+    now: NOW,
+    maxAgeHours: 26,
     updatedAt: null,
   });
 

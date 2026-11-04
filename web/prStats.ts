@@ -5,6 +5,7 @@ import { BASE_CSS, escapeHtml, taipeiTime } from './status.ts';
 export interface WeekCounts {
   week: string;
   counts: Record<string, number> | null;
+  truncated?: boolean;
 }
 
 export interface Range {
@@ -28,7 +29,7 @@ function marker(
   cy: number,
   options: { hollow: boolean; pending: string | null; title: string },
 ): string {
-  const shape = SHAPES[index % SHAPES.length];
+  const shape = SHAPES[(index + Math.floor(index / SERIES_COUNT)) % SHAPES.length];
   const color = seriesColor(index);
   const style = options.hollow
     ? `fill:var(--bg);stroke:${color};stroke-width:2`
@@ -61,6 +62,9 @@ const SERIES_CSS = `:root { --s1: #2563eb; --s2: #dc2626; --s3: #16a34a; --s4: #
 @media (prefers-color-scheme: dark) { :root { --s1: #60a5fa; --s2: #f87171; --s3: #4ade80; --s4: #fbbf24; --s5: #a78bfa; --s6: #22d3ee; --s7: #f472b6; --s8: #a3e635; } }`;
 const CHART = { width: 800, height: 260, left: 48, right: 8, top: 8, bottom: 24 };
 const GAP_LABEL_MIN_WIDTH = 80;
+const AXIS_LABEL_PADDING = 14;
+const AXIS_DIGIT_WIDTH = 13;
+const TRUNCATED_NOTE = '（已截斷，數字偏低）';
 
 const isDay = (value: string | null): value is string =>
   value !== null && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value));
@@ -86,10 +90,10 @@ export function parseRange(query: URLSearchParams, today: string): Range {
 
 export function readWeeks(weeks: string[]): WeekCounts[] {
   const outputDir = process.env.OUTPUT_DIR ?? 'output';
-  return weeks.map((week) => ({
-    week,
-    counts: load<WeekFile | null>(`prStats/${week}`, null, outputDir)?.counts ?? null,
-  }));
+  return weeks.map((week) => {
+    const file = load<WeekFile | null>(`prStats/${week}`, null, outputDir);
+    return { week, counts: file?.counts ?? null, truncated: file?.truncated === true };
+  });
 }
 
 const countOf = (week: WeekCounts, member: string) =>
@@ -127,19 +131,23 @@ function chart(
   label: string,
   currentWeek: string | null,
 ): string {
-  const plotWidth = CHART.width - CHART.left - CHART.right;
+  const highest = Math.max(1, ...series.flatMap((line) => line.values.map((value) => value ?? 0)));
+  const axisLeft = Math.max(
+    CHART.left,
+    AXIS_LABEL_PADDING + AXIS_DIGIT_WIDTH * String(highest).length,
+  );
+  const plotWidth = CHART.width - axisLeft - CHART.right;
   const plotHeight = CHART.height - CHART.top - CHART.bottom;
   const step = plotWidth / Math.max(weeks.length - 1, 1);
-  const highest = Math.max(1, ...series.flatMap((line) => line.values.map((value) => value ?? 0)));
-  const x = (index: number) => CHART.left + index * step;
+  const x = (index: number) => axisLeft + index * step;
   const y = (count: number) => CHART.top + (1 - count / highest) * plotHeight;
   const pendingIndex = weeks.findIndex((week) => week.week === currentWeek);
   const bands = unfetchedRuns(weeks).map(([first, last]) => {
-    const left = Math.max(CHART.left, x(first) - step / 2);
+    const left = Math.max(axisLeft, x(first) - step / 2);
     const right = Math.min(CHART.width - CHART.right, x(last) + step / 2);
     const text =
       right - left >= GAP_LABEL_MIN_WIDTH
-        ? `<text x="${((left + right) / 2).toFixed(1)}" y="${CHART.top + plotHeight / 2}" text-anchor="middle">未抓取</text>`
+        ? `<text x="${((left + right) / 2).toFixed(1)}" y="${CHART.top + plotHeight / 2}" text-anchor="middle" class="gap-label">未抓取</text>`
         : '';
     return `<rect x="${left.toFixed(1)}" y="${CHART.top}" width="${(right - left).toFixed(1)}" height="${plotHeight}" class="gap"><title>未抓取</title></rect>${text}`;
   });
@@ -160,7 +168,7 @@ function chart(
         marker(lineIndex, x(index), y(value), {
           hollow: false,
           pending: null,
-          title: `${name} ${weeks[index].week}: ${value}`,
+          title: `${name} ${weeks[index].week}${weeks[index].truncated ? TRUNCATED_NOTE : ''}: ${value}`,
         }),
       );
     }
@@ -182,10 +190,10 @@ function chart(
   const lastWeek = weeks.at(-1)?.week ?? '';
   return `<svg class="chart" viewBox="0 0 ${CHART.width} ${CHART.height}" role="img" aria-label="${label}，${firstWeek} 到 ${lastWeek}">
 ${bands.join('\n')}
-<line x1="${CHART.left}" y1="${CHART.top + plotHeight}" x2="${CHART.width - CHART.right}" y2="${CHART.top + plotHeight}" class="axis"/>
-<text x="${CHART.left - 6}" y="${CHART.top + 10}" text-anchor="end">${highest}</text>
-<text x="${CHART.left - 6}" y="${CHART.top + plotHeight}" text-anchor="end">0</text>
-<text x="${CHART.left}" y="${CHART.height - 6}">${firstWeek}</text>
+<line x1="${axisLeft}" y1="${CHART.top + plotHeight}" x2="${CHART.width - CHART.right}" y2="${CHART.top + plotHeight}" class="axis"/>
+<text x="${axisLeft - 6}" y="${CHART.top + 10}" text-anchor="end">${highest}</text>
+<text x="${axisLeft - 6}" y="${CHART.top + plotHeight}" text-anchor="end">0</text>
+<text x="${axisLeft}" y="${CHART.height - 6}">${firstWeek}</text>
 <text x="${CHART.width - CHART.right}" y="${CHART.height - 6}" text-anchor="end">${lastWeek}</text>
 ${lines.join('\n')}
 </svg>
@@ -223,7 +231,7 @@ function table(weeks: WeekCounts[], members: string[], currentWeek: string): str
     .reverse()
     .map((week) => {
       const cells = members.map((member) => `<td>${countOf(week, member) ?? '—'}</td>`).join('');
-      const label = week.week === currentWeek ? `${week.week}（進行中）` : week.week;
+      const label = `${week.week}${week.week === currentWeek ? '（進行中）' : ''}${week.truncated ? TRUNCATED_NOTE : ''}`;
       return `<tr><th scope="row">${label}</th>${cells}<td>${teamTotal(week, members) ?? '—'}</td><td>${teamAverage(week, members) ?? '—'}</td></tr>`;
     })
     .join('\n');
@@ -241,12 +249,16 @@ export function renderPrPage({
   members,
   range,
   today,
+  now,
+  maxAgeHours,
   updatedAt,
 }: {
   weeks: WeekCounts[];
   members: string[];
   range: Range;
   today: string;
+  now: Date;
+  maxAgeHours: number;
   updatedAt: string | null;
 }): string {
   const currentWeek = isoWeek(today);
@@ -258,9 +270,13 @@ export function renderPrPage({
   const content = members.length
     ? `<h2>團隊</h2>\n${teamChart(weeks, members, currentWeek)}\n<h2>個人</h2>\n${memberChart(weeks, members, currentWeek)}\n${table(weeks, members, currentWeek)}`
     : '<p>請在 config/prStats.yaml 填 members（GitHub 帳號）</p>';
-  const updated = updatedAt
-    ? `<p>資料更新於 ${taipeiTime(updatedAt)}</p>`
-    : '<p class="stale">尚無 pr_stats 成功紀錄</p>';
+  const overdue =
+    updatedAt !== null && (now.getTime() - Date.parse(updatedAt)) / 3_600_000 > maxAgeHours;
+  const updated = !updatedAt
+    ? '<p class="stale">尚無 pr_stats 成功紀錄</p>'
+    : overdue
+      ? `<p class="stale">資料更新於 ${taipeiTime(updatedAt)}，已逾時（上限 ${maxAgeHours} 小時）</p>`
+      : `<p>資料更新於 ${taipeiTime(updatedAt)}</p>`;
   const notice = range.invalid
     ? `<p class="notice" role="status">日期區間無效，已改顯示近 ${range.weeks ?? DEFAULT_WEEKS} 週</p>`
     : '';
@@ -277,11 +293,12 @@ svg.chart { width: 100%; height: auto; font-size: 11px; fill: var(--muted); }
 @media (max-width: 40rem) { svg.chart text { font-size: 20px; } }
 svg.chart .axis { stroke: var(--muted); }
 svg.chart .gap { fill: var(--line); opacity: 0.5; }
+svg.chart .gap-label { fill: var(--text); }
 form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0 1rem; }
 .legend { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; }
 .legend li { display: flex; align-items: center; gap: 0.3rem; }
 .stale { background: var(--bad-bg); color: var(--bad); font-weight: 600; padding: 0.4rem 0.6rem; }
-.notice { color: var(--bad); }
+.notice { font-weight: 600; }
 </style>
 </head>
 <body>
