@@ -1,3 +1,4 @@
+name: radar
 services:
   jobs:
     build: .
@@ -8,3 +9,15 @@ services:
       - ./output:/app/output
       - ./config:/app/config
       - ./prompts:/app/prompts
+
+  dozzle:
+    image: amir20/dozzle:v11.4.0
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./dozzle:/data
+    environment:
+      DOZZLE_AUTH_PROVIDER: simple
+      DOZZLE_FILTER: label=com.docker.compose.project=radar

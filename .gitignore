@@ -3,3 +3,4 @@ state/
 output/
 .claude/worktrees/
 node_modules/
+dozzle/

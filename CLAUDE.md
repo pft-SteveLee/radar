@@ -30,7 +30,9 @@ npm run lint                               # biome check . ; add --write to fix
 npm run digest -- --date 2026-11-04 --no-upload   # run the job without publishing
 ```
 
-Docker: `mkdir -p state output`, copy `.env.example` to `.env` and fill it, then `docker compose up -d --build`. Create `state/` and `output/` first: Docker would otherwise create them as root and the container's `node` user could not write. The Dockerfile deliberately avoids BuildKit-only features (`ADD --checksum`), because the dev machine has no BuildKit.
+Docker: `mkdir -p state output dozzle`, copy `.env.example` to `.env` and fill it, then `docker compose up -d --build`. Create `state/` and `output/` first: Docker would otherwise create them as root and the container's `node` user could not write. The Dockerfile deliberately avoids BuildKit-only features (`ADD --checksum`), because the dev machine has no BuildKit.
+
+Logs web UI: the `dozzle` service serves the containers' logs (supercronic prints each job's start and exit code) at `http://<host>:8080` on the LAN. Login is required; create the account file once with `docker run -it --rm amir20/dozzle:v11.4.0 generate <user> > dozzle/users.yml` (it prompts for the password; `dozzle/` is gitignored). `DOZZLE_FILTER` limits it to containers labeled with compose project `radar`, which is why the compose file pins `name: radar`; container actions and shell stay off (Dozzle's defaults). It is plain HTTP, so the password crosses the LAN unencrypted.
 
 ## Architecture
 
