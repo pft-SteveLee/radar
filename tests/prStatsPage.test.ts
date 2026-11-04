@@ -47,15 +47,26 @@ const page = (members: string[]) =>
 test('renderPrPage shows the weekly count of every member, 0 when a fetched week has none', () => {
   const html = page(['alice', 'bob']);
 
-  assert.match(html, /<tr><th scope="row">2026-W43<\/th><td>3<\/td><td>1<\/td><\/tr>/);
-  assert.match(html, /<tr><th scope="row">2026-W45<\/th><td>5<\/td><td>0<\/td><\/tr>/);
+  assert.match(html, /<tr><th scope="row">2026-W43<\/th><td>3<\/td><td>1<\/td><td>4<\/td><\/tr>/);
+  assert.match(html, /<tr><th scope="row">2026-W45<\/th><td>5<\/td><td>0<\/td><td>5<\/td><\/tr>/);
 });
 
 test('renderPrPage marks a week that was never fetched with a dash, not 0', () => {
   assert.match(
     page(['alice', 'bob']),
-    /<tr><th scope="row">2026-W44<\/th><td>—<\/td><td>—<\/td><\/tr>/,
+    /<tr><th scope="row">2026-W44<\/th><td>—<\/td><td>—<\/td><td>—<\/td><\/tr>/,
   );
+});
+
+test('renderPrPage adds a team chart with the members total and the average per member', () => {
+  const html = page(['alice', 'bob']);
+
+  assert.match(html, /<th scope="col">合計<\/th>/);
+  assert.match(html, /data-member="合計"/);
+  assert.match(html, /<title>合計 2026-W45: 5<\/title>/);
+  assert.match(html, /<title>人均 2026-W43: 2<\/title>/);
+  assert.match(html, /<title>人均 2026-W45: 2\.5<\/title>/);
+  assert.equal((html.match(/<svg/g) ?? []).length, 2);
 });
 
 test('renderPrPage leaves out authors who are not members', () => {
