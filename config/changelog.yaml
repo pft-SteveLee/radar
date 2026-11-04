@@ -1,0 +1,33 @@
+# Sources watched by changelog_watch (Fridays). kind: githubReleases | markdown | githubFile | githubSkills
+sources:
+  - id: claude-code
+    kind: githubReleases
+    repo: anthropics/claude-code
+  - id: orca
+    kind: githubReleases
+    repo: stablyai/orca
+  - id: api-release-notes
+    kind: markdown
+    url: https://platform.claude.com/docs/en/release-notes/overview.md
+  - id: model-deprecations
+    kind: markdown
+    url: https://platform.claude.com/docs/en/about-claude/model-deprecations.md
+  - id: skills
+    kind: githubSkills
+    repo: anthropics/skills
+  - id: marketplace-official
+    kind: githubFile
+    repo: anthropics/claude-plugins-official
+    path: .claude-plugin/marketplace.json
+  - id: marketplace-community
+    kind: githubFile
+    repo: anthropics/claude-plugins-community
+    path: .claude-plugin/marketplace.json
+  - id: marketplace-knowledge-work
+    kind: githubFile
+    repo: anthropics/knowledge-work-plugins
+    path: .claude-plugin/marketplace.json
+  - id: awesome
+    kind: githubFile
+    repo: GetBindu/awesome-claude-code-and-skills
+    path: readme.md

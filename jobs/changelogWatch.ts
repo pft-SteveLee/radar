@@ -1,9 +1,11 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { type call, MODELS, runCost } from '../lib/claude.ts';
-import type { publish } from '../lib/codimd.ts';
+import { parseArgs } from 'node:util';
+import { parse as parseYaml } from 'yaml';
+import { call, MODELS, runCost } from '../lib/claude.ts';
+import { publish } from '../lib/codimd.ts';
 import { note } from '../lib/render.ts';
-import type { RunResult } from '../lib/runLog.ts';
+import { type RunResult, recordRun } from '../lib/runLog.ts';
 import { load, save } from '../lib/state.ts';
 import {
   type ChangeItem,
@@ -221,4 +223,19 @@ export async function run(
   for (const { id, state } of nextStates) save(sourceStateName(id), state);
   save(weekStateName(week), { changes, baselined } satisfies WeekFile);
   return { url, warnings };
+}
+
+if (import.meta.main) {
+  const { values } = parseArgs({ options: { 'no-upload': { type: 'boolean' } } });
+  await recordRun(JOB, () => {
+    const token = process.env.GITHUB_TOKEN;
+    if (!token) throw new Error('GITHUB_TOKEN is not set');
+    const configFile = parseYaml(
+      readFileSync(join(process.env.CONFIG_DIR ?? 'config', 'changelog.yaml'), 'utf8'),
+    ) as { sources: SourceConfig[] };
+    return run(
+      { upload: !values['no-upload'], config: { sources: configFile.sources, token } },
+      { fetch, now: () => new Date(), call, publish },
+    );
+  });
 }
