@@ -19,3 +19,4 @@ services:
       - "8080:8080"
     volumes:
       - ./output:/app/output:ro
+      - ./config:/app/config:ro

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Stage 1 of 4 is built: shared `lib/` plus the `reddit_digest` job. `dev_weekly`, `changelog_watch` and `amp_compare` are still only planned in `t.md` (Traditional Chinese, the plan this project follows). If `t.md` and the code disagree, ask which one is right; the stack there was Python, the code is TypeScript.
+Stage 1 of 4 is built: shared `lib/` plus the `reddit_digest` job. `pr_stats` (not in `t.md`, no model, $0) was added on request. `dev_weekly`, `changelog_watch` and `amp_compare` are still only planned in `t.md` (Traditional Chinese, the plan this project follows). If `t.md` and the code disagree, ask which one is right; the stack there was Python, the code is TypeScript.
 
 ## What this is
 
@@ -13,6 +13,7 @@ Stage 1 of 4 is built: shared `lib/` plus the `reddit_digest` job. `dev_weekly`,
 | Job | Schedule (Asia/Taipei) | Models |
 | --- | --- | --- |
 | `reddit_digest` (built) | daily 07:30, so the note exists before 08:00 | Haiku 5.5 scores, Sonnet 5.5 summarizes |
+| `pr_stats` (built; merged PRs per member and ISO week, trend on `/prs`) | daily 06:30 | none |
 | `dev_weekly` (GitHub PRs/issues) | Mon 09:00 | Sonnet 5.5; Opus 5.5 only for diffs of PRs with a short description (<50 words) and >100 changed lines |
 | `changelog_watch` (Claude Code, Claude API, Orca ADE, skills/plugin marketplaces) | Fri 09:00 | Haiku 5.5 diff triage, Sonnet 5.5 summary |
 | `amp_compare` (competitor feature matrix per AMP workspace) | monthly or manual | Sonnet extracts, Opus 5.5 aligns and analyzes, Fable 5.1 for `--deep` |
@@ -28,11 +29,12 @@ node --test --test-name-pattern="seen" tests/redditRun.test.ts   # one test by n
 npm run typecheck                          # tsc --noEmit
 npm run lint                               # biome check . ; add --write to fix
 npm run digest -- --date 2026-11-04 --no-upload   # run the job without publishing
+GITHUB_TOKEN=$(gh auth token) npm run pr-stats -- --from 2025-11-01 --to 2026-11-04   # refetch every week touched by the range
 ```
 
 Docker: `mkdir -p state output`, copy `.env.example` to `.env` and fill it, then `docker compose up -d --build`. Create `state/` and `output/` first: Docker would otherwise create them as root and the container's `node` user could not write. The Dockerfile deliberately avoids BuildKit-only features (`ADD --checksum`), because the dev machine has no BuildKit.
 
-Status page: the `web` service (same image, `node web/statusServer.ts`) serves `http://<host>:8080` on the LAN without login: this month's cost against the $100 budget, cost per job, and the last 30 runs with result, error, warnings, cost and note link. It only reads `output/cost.jsonl` and `output/runs.jsonl` (mounted read-only) and has no access to the Docker socket. At the top it shows per job how long ago the last successful run started, in red when older than that job's limit (`MAX_AGE_HOURS` in `web/statusServer.ts`, 26 hours for `reddit_digest`): a schedule that never fired leaves no run record, so this is the only sign of it. Add a limit there for every new job. Full job logs are not in it: use `docker compose logs -f jobs`.
+Status page: the `web` service (same image, `node web/statusServer.ts`) serves `http://<host>:8080` on the LAN without login: this month's cost against the $100 budget, cost per job, and the last 30 runs with result, error, warnings, cost and note link. It only reads `output/cost.jsonl` and `output/runs.jsonl` (mounted read-only) and has no access to the Docker socket. At the top it shows per job how long ago the last successful run started, in red when older than that job's limit (`MAX_AGE_HOURS` in `web/statusServer.ts`, 26 hours for each job): a schedule that never fired leaves no run record, so this is the only sign of it. Add a limit there for every new job. Full job logs are not in it: use `docker compose logs -f jobs`.
 
 ## Architecture
 
@@ -40,9 +42,10 @@ Status page: the `web` service (same image, `node web/statusServer.ts`) serves `
 - `lib/claude.ts`: `call()` wraps the Messages API (system prompt cached, optional JSON schema via `output_config.format`) and appends every call to `output/cost.jsonl`; `runCost(job, since)` sums one run for the note footer. The price table is hard-coded there.
 - `lib/runLog.ts`: `recordRun(job, work)` wraps a job's CLI entry (config loading included) and appends one record to `output/runs.jsonl` for every run, also a failed one, then rethrows so the exit code stays non-zero. `run()` of a job returns `{ url, warnings }` for it. `web/status.ts` (pure page rendering and month totals in Asia/Taipei time) and `web/statusServer.ts` build the status page from those two files.
 - `lib/codimd.ts`: `publish(alias, markdown)`. See the next section.
-- `lib/state.ts`: JSON files under `STATE_DIR` (default `state/`), written atomically. `lib/render.ts`: note layout (title, `> ⚠️` warnings, body, cost line).
+- `lib/state.ts`: JSON files under `STATE_DIR` (default `state/`, or another directory passed as the last argument), written atomically. `lib/render.ts`: note layout (title, `> ⚠️` warnings, body, cost line).
 - Directories come from env with these defaults: `STATE_DIR=state`, `OUTPUT_DIR=output`, `PROMPTS_DIR=prompts`, `CONFIG_DIR=config`. `state/`, `output/`, `config/`, `prompts/` are volumes in compose, so prompts and config change without a rebuild.
 - Pipeline of `reddit_digest`: collect feeds, drop seen ids and posts older than 48 hours, save `state/reddit/raw/<date>.json`, Haiku scores 50 at a time (two invalid answers give the batch score 0 plus a warning), Sonnet summarizes posts scoring 3 or more (given the previous 3 days of notes), write `output/reddit/<date>.md`, publish to alias `radar-reddit-<date>`.
+- Pipeline of `pr_stats`: one GitHub Search API query per ISO week (Monday to Sunday, Taipei time) for merged PRs of the orgs in `config/prStats.yaml`, paged 100 at a time with 2.1 s between requests (search allows 30 a minute; a 403/429 waits for the reset). Counts of every author go to `output/prStats/<YYYY-Www>.json`, overwritten on a rerun; `members` in the yaml only filters what `/prs` shows, so changing it needs no refetch. Search returns at most 1000 results, more gives a warning. Without `--from/--to` it fetches the last 7 days (this week and last). `/prs` shows a week without a file as `—`, not 0. `web` mounts `config/` read-only for the member list.
 - Posts are marked seen only after the upload succeeds, so a failed run is picked up again by the next one. `--no-upload` never marks posts. `--date D` reuses `raw/D.json` when it exists instead of fetching again.
 
 ## CodiMD
