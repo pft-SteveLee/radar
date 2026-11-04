@@ -4,6 +4,7 @@ import { parseArgs } from 'node:util';
 import { parse as parseYaml } from 'yaml';
 import { call, MODELS, runCost } from '../lib/claude.ts';
 import { publish } from '../lib/codimd.ts';
+import { withIndex } from '../lib/noteIndex.ts';
 import { note } from '../lib/render.ts';
 import { type RunResult, recordRun } from '../lib/runLog.ts';
 import { load, save } from '../lib/state.ts';
@@ -38,6 +39,7 @@ const JOB = 'changelog_watch';
 const TRIAGE_ATTEMPTS = 2;
 const TRIAGE_CHUNK_CHARS = 15_000;
 const MAX_SUMMARY_CHANGES = 40;
+const RESERVED_PER_SOURCE = 4;
 const MAX_IMPORTANCE = 3;
 
 const TRIAGE_SCHEMA = {
@@ -109,7 +111,7 @@ async function triageChunk(item: ChangeItem, text: string, deps: Deps): Promise<
       const answer = await deps.call({
         job: JOB,
         model: MODELS.haiku,
-        system: readPrompt('changelogTriage.md'),
+        system: withContext(readPrompt('changelogTriage.md'), readContext()),
         user: JSON.stringify({ source: item.source, title: item.title, text }),
         schema: TRIAGE_SCHEMA,
       });
@@ -158,16 +160,32 @@ function readContext(): string | null {
   }
 }
 
+const withContext = (prompt: string, context: string | null) =>
+  context ? `${prompt}\n\n## 團隊背景\n\n${context}` : prompt;
+
 const isUrgent = (change: Change) => change.category === '棄用' || change.category === '價格';
 
+export function selectChanges(changes: Change[]): Change[] {
+  const ranked = [...changes].sort(
+    (a, b) => Number(isUrgent(b)) - Number(isUrgent(a)) || b.importance - a.importance,
+  );
+  const chosen = new Set<Change>(ranked.filter(isUrgent).slice(0, MAX_SUMMARY_CHANGES));
+  const perSource = new Map<string, number>();
+  for (const change of ranked) {
+    const taken = perSource.get(change.source) ?? 0;
+    if (chosen.size >= MAX_SUMMARY_CHANGES || taken >= RESERVED_PER_SOURCE) continue;
+    if (!chosen.has(change)) chosen.add(change);
+    perSource.set(change.source, taken + 1);
+  }
+  for (const change of ranked) if (chosen.size < MAX_SUMMARY_CHANGES) chosen.add(change);
+  return ranked.filter((change) => chosen.has(change));
+}
+
 async function summarize(significant: Change[], context: string | null, deps: Deps) {
-  const system = [readPrompt('changelogSummary.md'), context && `## 團隊背景\n\n${context}`]
-    .filter(Boolean)
-    .join('\n\n');
   return (await deps.call({
     job: JOB,
     model: MODELS.sonnet,
-    system,
+    system: withContext(readPrompt('changelogSummary.md'), context),
     user: JSON.stringify({
       urgent: significant.filter(isUrgent),
       others: significant.filter((change) => !isUrgent(change)),
@@ -241,10 +259,8 @@ export async function run(
   const stored = load<WeekFile>(weekStateName(week), { changes: [], baselined: [] });
   const changes = [...stored.changes, ...newChanges];
   const baselined = [...new Set([...stored.baselined, ...newBaselines])];
-  const significant = changes
-    .filter((change) => change.importance >= SUMMARY_MIN_IMPORTANCE)
-    .sort((a, b) => Number(isUrgent(b)) - Number(isUrgent(a)) || b.importance - a.importance);
-  const selected = significant.slice(0, MAX_SUMMARY_CHANGES);
+  const significant = changes.filter((change) => change.importance >= SUMMARY_MIN_IMPORTANCE);
+  const selected = selectChanges(significant);
   if (significant.length > selected.length)
     warnings.push(
       `本週有 ${significant.length} 項重要變更，週報只列出最重要的 ${selected.length} 項，另外 ${significant.length - selected.length} 項未列入`,
@@ -264,6 +280,19 @@ export async function run(
   });
   mkdirSync(join(outputPath(week), '..'), { recursive: true });
   writeFileSync(outputPath(week), text);
+  const chosen = new Set(selected);
+  writeFileSync(
+    outputPath(week).replace(/\.md$/, '.triage.json'),
+    JSON.stringify(
+      {
+        total: significant.length,
+        selected: selected.length,
+        changes: changes.map((change) => ({ ...change, selected: chosen.has(change) })),
+      },
+      null,
+      2,
+    ),
+  );
   if (!upload) return { url: null, warnings };
 
   const { url, status } = await deps.publish(`radar-changelog-${week}`, text);
@@ -278,15 +307,22 @@ export async function run(
 
 if (import.meta.main) {
   const { values } = parseArgs({ options: { 'no-upload': { type: 'boolean' } } });
-  await recordRun(JOB, () => {
-    const token = process.env.GITHUB_TOKEN;
-    if (!token) throw new Error('GITHUB_TOKEN is not set');
-    const configFile = parseYaml(
-      readFileSync(join(process.env.CONFIG_DIR ?? 'config', 'changelog.yaml'), 'utf8'),
-    ) as { sources: SourceConfig[] };
-    return run(
-      { upload: !values['no-upload'], config: { sources: configFile.sources, token } },
-      { fetch, now: () => new Date(), call, publish },
-    );
-  });
+  await recordRun(
+    JOB,
+    withIndex(
+      JOB,
+      () => {
+        const token = process.env.GITHUB_TOKEN;
+        if (!token) throw new Error('GITHUB_TOKEN is not set');
+        const configFile = parseYaml(
+          readFileSync(join(process.env.CONFIG_DIR ?? 'config', 'changelog.yaml'), 'utf8'),
+        ) as { sources: SourceConfig[] };
+        return run(
+          { upload: !values['no-upload'], config: { sources: configFile.sources, token } },
+          { fetch, now: () => new Date(), call, publish },
+        );
+      },
+      publish,
+    ),
+  );
 }
