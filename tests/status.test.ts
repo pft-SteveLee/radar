@@ -156,6 +156,21 @@ test('renderPage flags a job that has never succeeded', () => {
   assert.match(html, /class="stale"[^>]*>reddit_digest 尚無成功紀錄/);
 });
 
+test('renderPage declares light and dark form controls, landmarks and roomy links', () => {
+  const html = page([run()]);
+
+  assert.match(html, /color-scheme: light dark/);
+  assert.match(html, /<main>[\s\S]*<h1>radar 狀態<\/h1>[\s\S]*<\/main>/);
+  assert.match(html, /<nav aria-label="頁面"><a href="\/prs">PR 趨勢<\/a><\/nav>/);
+  assert.match(html, /nav a \{ display: inline-block; padding: 0\.4rem 0\.5rem; \}/);
+  assert.match(html, /nav strong \{ display: inline-block; padding: 0\.4rem 0\.5rem; \}/);
+  assert.match(html, /th\[scope="row"\] \{ white-space: nowrap; \}/);
+});
+
+test('renderPage keeps a link in a failed row readable on the red wash', () => {
+  assert.match(page([run()]), /tr\.failed a \{ color: inherit; text-decoration: underline; \}/);
+});
+
 test('renderPage gives the latest failure and the limit next to an overdue job', () => {
   const html = page(
     [

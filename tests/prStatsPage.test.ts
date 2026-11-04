@@ -147,10 +147,54 @@ test('renderPrPage shows when the numbers were last updated, or that they never 
   assert.match(page(['alice'], { updatedAt: null }), /class="stale"[^>]*>尚無 pr_stats 成功紀錄/);
 });
 
+test('renderPrPage has landmarks and marks the chosen range as current', () => {
+  const html = renderPrPage({
+    weeks: [{ week: '2026-W45', counts: { alice: 1 } }],
+    members: ['alice'],
+    range: { from: '2026-05-13', to: TODAY, weeks: 26, invalid: false },
+    today: TODAY,
+    updatedAt: null,
+  });
+
+  assert.match(html, /<main>[\s\S]*<h1>每週 merged PR 數<\/h1>[\s\S]*<\/main>/);
+  assert.match(html, /<nav aria-label="頁面"><a href="\/">← 狀態<\/a><\/nav>/);
+  assert.match(html, /<nav aria-label="顯示範圍"><a href="\/prs\?weeks=12">12 週<\/a>/);
+  assert.match(html, /<strong aria-current="true">26 週<\/strong>/);
+});
+
+test('renderPrPage takes series colors from variables that have a dark version', () => {
+  const html = page(['alice', 'bob']);
+
+  assert.match(html, /--s1: #2563eb;/);
+  assert.match(html, /--s8: #4d7c0f;/);
+  assert.match(html, /@media \(prefers-color-scheme: dark\) \{ :root \{ --s1: #60a5fa;/);
+  assert.match(html, /stroke:var\(--s1\)/);
+  assert.match(html, /stroke:var\(--s2\)/);
+  assert.doesNotMatch(html, /stroke="#/);
+});
+
+test('renderPrPage tells series apart by marker shape as well as by color', () => {
+  const html = page(['alice', 'bob']);
+
+  assert.match(html, /data-shape="circle"/);
+  assert.match(html, /data-shape="square"/);
+  assert.match(
+    html,
+    /<li><svg class="swatch"[^>]*aria-hidden="true">.*data-shape="circle".*<\/svg>alice<\/li>/,
+  );
+});
+
+test('renderPrPage draws the axis line darker and gives controls room to tap', () => {
+  const html = page(['alice']);
+
+  assert.match(html, /svg\.chart \.axis \{ stroke: var\(--muted\); \}/);
+  assert.match(html, /input, button \{ min-height: 2rem; font: inherit; \}/);
+});
+
 test('renderPrPage keeps chart text readable on a phone and hints that the table scrolls', () => {
   const html = page(['alice']);
 
-  assert.match(html, /@media \(max-width: 40rem\) \{ svg text \{ font-size: 20px; \} \}/);
+  assert.match(html, /@media \(max-width: 40rem\) \{ svg\.chart text \{ font-size: 20px; \} \}/);
   assert.match(html, /（— 表示該週尚未抓取）<span class="hint">（可左右捲動）<\/span>/);
 });
 

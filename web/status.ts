@@ -30,7 +30,7 @@ export const escapeHtml = (text: string) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-export const BASE_CSS = `:root { --bg: #fafaf9; --text: #1c1917; --muted: #78716c; --line: #e7e5e4; --accent: #2563eb; --bad: #b91c1c; --bad-bg: #fee2e2; }
+export const BASE_CSS = `:root { color-scheme: light dark; --bg: #fafaf9; --text: #1c1917; --muted: #78716c; --line: #e7e5e4; --accent: #2563eb; --bad: #b91c1c; --bad-bg: #fee2e2; }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #1c1917; --text: #f5f5f4; --muted: #a8a29e; --line: #44403c; --accent: #60a5fa; --bad: #fca5a5; --bad-bg: #450a0a; }
 }
@@ -42,6 +42,11 @@ table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
 caption { text-align: left; color: var(--muted); padding-bottom: 0.5rem; }
 th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
 a { color: var(--accent); }
+nav a { display: inline-block; padding: 0.4rem 0.5rem; }
+nav strong { display: inline-block; padding: 0.4rem 0.5rem; }
+th[scope="row"] { white-space: nowrap; }
+td a { white-space: nowrap; }
+input, button { min-height: 2rem; font: inherit; }
 .hint { display: none; }
 @media (max-width: 40rem) { .hint { display: inline; } }`;
 
@@ -139,6 +144,7 @@ ${runs.map(runRow).join('\n')}
 ${BASE_CSS}
 progress { width: 100%; height: 0.75rem; accent-color: var(--accent); }
 tr.failed { background: var(--bad-bg); color: var(--bad); }
+tr.failed a { color: inherit; text-decoration: underline; }
 .freshness { list-style: none; padding: 0; }
 .freshness li { padding: 0.4rem 0.6rem; }
 .freshness li.stale { background: var(--bad-bg); color: var(--bad); font-weight: 600; }
@@ -147,8 +153,9 @@ tr.failed { background: var(--bad-bg); color: var(--bad); }
 </style>
 </head>
 <body>
+<main>
 <h1>radar 狀態</h1>
-<p><a href="/prs">PR 趨勢</a></p>
+<nav aria-label="頁面"><a href="/prs">PR 趨勢</a></nav>
 <ul class="freshness">
 ${freshness}
 </ul>
@@ -164,6 +171,7 @@ ${jobRows}
 </table>
 <h2>執行紀錄</h2>
 ${runTable}
+</main>
 </body>
 </html>
 `;
