@@ -6,6 +6,7 @@ import { parse as parseYaml } from 'yaml';
 import { call, MODELS, runCost } from '../lib/claude.ts';
 import { publish } from '../lib/codimd.ts';
 import { note } from '../lib/render.ts';
+import { type RunResult, recordRun } from '../lib/runLog.ts';
 import { load, save } from '../lib/state.ts';
 
 export interface Post {
@@ -267,7 +268,7 @@ interface RunOptions {
   config: Config;
 }
 
-export async function run({ date, upload, config }: RunOptions, deps: Deps): Promise<void> {
+export async function run({ date, upload, config }: RunOptions, deps: Deps): Promise<RunResult> {
   const startedAt = new Date().toISOString();
   const seen = load<Record<string, string>>('reddit_seen', {});
   const rawName = `reddit/raw/${date}`;
@@ -300,7 +301,7 @@ export async function run({ date, upload, config }: RunOptions, deps: Deps): Pro
   });
   mkdirSync(join(outputPath(date), '..'), { recursive: true });
   writeFileSync(outputPath(date), text);
-  if (!upload) return;
+  if (!upload) return { url: null, warnings };
 
   const { url, status } = await deps.publish(`radar-reddit-${date}`, text);
   console.log(`${url} (${status})`);
@@ -310,6 +311,7 @@ export async function run({ date, upload, config }: RunOptions, deps: Deps): Pro
   const marked = { ...seen, ...Object.fromEntries(raw.posts.map((post) => [post.id, date])) };
   save('reddit_seen', pruneSeen(marked, date, SEEN_RETENTION_DAYS));
   save('last_run', { ...load('last_run', {}), reddit_digest: date });
+  return { url, warnings };
 }
 
 if (import.meta.main) {
@@ -321,18 +323,23 @@ if (import.meta.main) {
   const configFile = parseYaml(
     readFileSync(join(process.env.CONFIG_DIR ?? 'config', 'reddit.yaml'), 'utf8'),
   ) as { userAgent: string; topics: Record<string, string[]> };
-  await run(
-    {
-      date,
-      upload: !values['no-upload'],
-      config: { userAgent: configFile.userAgent, feeds: Object.values(configFile.topics).flat() },
-    },
-    {
-      fetch,
-      sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-      now: () => new Date(),
-      call,
-      publish,
-    },
+  await recordRun(JOB, () =>
+    run(
+      {
+        date,
+        upload: !values['no-upload'],
+        config: {
+          userAgent: configFile.userAgent,
+          feeds: Object.values(configFile.topics).flat(),
+        },
+      },
+      {
+        fetch,
+        sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+        now: () => new Date(),
+        call,
+        publish,
+      },
+    ),
   );
 }

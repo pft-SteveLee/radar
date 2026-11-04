@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, test } from 'node:test';
-import { call, MODELS, runCost } from '../lib/claude.ts';
+import { call, MODELS, readCostLines, runCost } from '../lib/claude.ts';
 
 interface FakeRequest {
   model: string;
@@ -94,4 +94,14 @@ test('runCost sums only the calls of that job logged at or after the given time'
   await call({ job: 'b', model: MODELS.sonnet, system: 'S', user: 'U' }, client);
 
   assert.ok(Math.abs(runCost('a', since) - 0.0074) < 1e-9);
+});
+
+test('readCostLines returns an empty list without a log and every logged call with one', async () => {
+  assert.deepEqual(readCostLines(), []);
+
+  await call({ job: 'a', model: MODELS.sonnet, system: 'S', user: 'U' }, fakeClient('x'));
+
+  const lines = readCostLines();
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].job, 'a');
 });
