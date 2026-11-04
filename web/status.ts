@@ -60,7 +60,7 @@ function runRow(run: RunRecord): string {
 <td>${taipeiTime(run.startedAt)}</td>
 <td>${duration(run)}</td>
 <td>${failed ? '失敗' : '成功'}${detail}</td>
-<td>${run.warnings.length ? `警告 ${run.warnings.length}` : '—'}</td>
+<td>${warningsCell(run.warnings)}</td>
 <td>${dollars(run.costUsd)}</td>
 <td>${note}</td>
 </tr>`;
@@ -76,17 +76,42 @@ interface PageInput {
 
 function freshnessItem(job: string, limitHours: number, runs: RunRecord[], now: Date): string {
   const lastSuccess = runs.find((run) => run.job === job && run.status === 'ok');
-  if (!lastSuccess) return `<li class="stale">${escapeHtml(job)} 尚無成功紀錄，已逾時</li>`;
+  const lastFailure = runs.find(
+    (run) =>
+      run.job === job &&
+      run.status === 'failed' &&
+      (!lastSuccess || Date.parse(run.startedAt) > Date.parse(lastSuccess.startedAt)),
+  );
+  const reason = lastFailure
+    ? `，最近一次：${taipeiTime(lastFailure.startedAt)} 失敗：${escapeHtml(lastFailure.error || '無錯誤訊息')}`
+    : '';
+  const overdue = `，已逾時（上限 ${limitHours} 小時）`;
+  if (!lastSuccess)
+    return `<li class="stale">${escapeHtml(job)} 尚無成功紀錄${overdue}${reason}</li>`;
   const hours = Math.floor((now.getTime() - Date.parse(lastSuccess.startedAt)) / 3_600_000);
   const text = `${escapeHtml(job)} 上次成功：${hours} 小時前（${taipeiTime(lastSuccess.startedAt)}）`;
-  return hours > limitHours ? `<li class="stale">${text}，已逾時</li>` : `<li>${text}</li>`;
+  return hours > limitHours
+    ? `<li class="stale">${text}${overdue}${reason}</li>`
+    : `<li>${text}${reason}</li>`;
+}
+
+function warningsCell(warnings: string[]): string {
+  if (!warnings.length) return '—';
+  const items = warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('');
+  return `<details><summary>警告 ${warnings.length}</summary><ul>${items}</ul></details>`;
+}
+
+function budgetLine(totalUsd: number, budgetUsd: number): string {
+  const ratio = (totalUsd / budgetUsd) * 100;
+  const percent = totalUsd > 0 && ratio < 1 ? '&lt;1' : String(Math.round(ratio));
+  const text = `${dollars(totalUsd)} / $${budgetUsd}（${percent}%）`;
+  return totalUsd > budgetUsd ? `<p class="over">${text}，已超支</p>` : `<p>${text}</p>`;
 }
 
 export function renderPage({ summary, runs, budgetUsd, now, maxAgeHours }: PageInput): string {
   const freshness = Object.entries(maxAgeHours)
     .map(([job, limitHours]) => freshnessItem(job, limitHours, runs, now))
     .join('\n');
-  const percent = Math.round((summary.totalUsd / budgetUsd) * 100);
   const jobRows = summary.byJob
     .map((entry) => `<tr><td>${escapeHtml(entry.job)}</td><td>${dollars(entry.usd)}</td></tr>`)
     .join('\n');
@@ -114,6 +139,7 @@ tr.failed { background: var(--bad-bg); color: var(--bad); }
 .freshness li { padding: 0.4rem 0.6rem; }
 .freshness li.stale { background: var(--bad-bg); color: var(--bad); font-weight: 600; }
 .error { word-break: break-word; }
+.over { color: var(--bad); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -123,7 +149,7 @@ tr.failed { background: var(--bad-bg); color: var(--bad); }
 ${freshness}
 </ul>
 <h2>${summary.month} 花費</h2>
-<p>${dollars(summary.totalUsd)} / $${budgetUsd}（${percent}%）</p>
+${budgetLine(summary.totalUsd, budgetUsd)}
 <progress value="${summary.totalUsd.toFixed(2)}" max="${budgetUsd}" aria-label="本月花費佔額度"></progress>
 <table>
 <caption>各 job 本月花費</caption>

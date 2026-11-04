@@ -138,3 +138,55 @@ test('renderPage flags a job that has never succeeded', () => {
 
   assert.match(html, /class="stale"[^>]*>reddit_digest 尚無成功紀錄/);
 });
+
+test('renderPage gives the latest failure and the limit next to an overdue job', () => {
+  const html = page(
+    [
+      run({
+        status: 'failed',
+        error: 'CodiMD login failed: HTTP 502',
+        url: null,
+        startedAt: '2026-11-04T23:30:00.000Z',
+      }),
+      run(),
+    ],
+    12.4,
+    '2026-11-05T09:00:00Z',
+  );
+
+  assert.match(
+    html,
+    /class="stale"[^>]*>reddit_digest 上次成功：33 小時前（2026-11-04 07:30），已逾時（上限 26 小時），最近一次：2026-11-05 07:30 失敗：CodiMD login failed: HTTP 502/,
+  );
+});
+
+test('renderPage names the failure of a job that has never succeeded', () => {
+  const html = page([run({ status: 'failed', error: 'boom', url: null })]);
+
+  assert.match(html, /尚無成功紀錄，已逾時（上限 26 小時），最近一次：.*失敗：boom/);
+});
+
+test('renderPage shows no failure next to a job whose latest run succeeded', () => {
+  const html = page([
+    run(),
+    run({ status: 'failed', error: 'old', url: null, startedAt: '2026-11-02T00:00:00.000Z' }),
+  ]);
+
+  assert.doesNotMatch(html, /最近一次/);
+});
+
+test('renderPage lets the warnings of a run be opened and escapes them', () => {
+  const html = page([run({ warnings: ['feed <a> failed', 'second'] })]);
+
+  assert.match(html, /<details><summary>警告 2<\/summary><ul><li>feed &lt;a&gt; failed<\/li>/);
+});
+
+test('renderPage shows a spend under one percent as less than one percent, not 0', () => {
+  assert.match(page([], 0.23), /\$0\.23 \/ \$100（&lt;1%）/);
+  assert.match(page([], 0), /\$0\.00 \/ \$100（0%）/);
+});
+
+test('renderPage marks a spend above the budget in the correction color with words', () => {
+  assert.match(page([], 120), /class="over"[^>]*>\$120\.00 \/ \$100（120%），已超支/);
+  assert.doesNotMatch(page([], 12.4), /class="over"/);
+});
