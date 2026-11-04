@@ -1,6 +1,7 @@
 services:
   jobs:
     build: .
+    image: radar
     env_file: .env
     restart: unless-stopped
     volumes:
@@ -8,3 +9,13 @@ services:
       - ./output:/app/output
       - ./config:/app/config
       - ./prompts:/app/prompts
+
+  web:
+    build: .
+    image: radar
+    command: ["node", "web/statusServer.ts"]
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./output:/app/output:ro

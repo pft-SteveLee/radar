@@ -204,3 +204,18 @@ test('run gives Sonnet the notes of the previous three days to avoid repeating t
   assert.match(sonnetCall?.user ?? '', /YESTERDAY-NOTE/);
   assert.doesNotMatch(sonnetCall?.user ?? '', /TOO-OLD-NOTE/);
 });
+
+test('run returns the note url and the warnings of the run', async () => {
+  save('last_run', { reddit_digest: '2026-10-30' });
+
+  const result = await run({ date, upload: true, config }, makeDeps());
+
+  assert.equal(result.url, 'https://codimd.test/radar-reddit-2026-11-04');
+  assert.deepEqual(result.warnings, ['上次執行是 5 天前']);
+});
+
+test('run returns no url when nothing was published', async () => {
+  const result = await run({ date, upload: false, config }, makeDeps());
+
+  assert.equal(result.url, null);
+});

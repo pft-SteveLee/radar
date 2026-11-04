@@ -25,7 +25,7 @@ interface CallOptions {
   schema?: Record<string, unknown>;
 }
 
-interface CostLine {
+export interface CostLine {
   ts: string;
   job: string;
   model: string;
@@ -82,18 +82,22 @@ export async function call(
   return schema ? JSON.parse(text) : text;
 }
 
-export function runCost(job: string, sinceTimestamp: string): number {
+export function readCostLines(): CostLine[] {
   let log: string;
   try {
     log = readFileSync(costLogPath(), 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw error;
   }
   return log
     .split('\n')
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as CostLine)
+    .map((line) => JSON.parse(line) as CostLine);
+}
+
+export function runCost(job: string, sinceTimestamp: string): number {
+  return readCostLines()
     .filter((line) => line.job === job && line.ts >= sinceTimestamp)
     .reduce((total, line) => total + line.usd, 0);
 }
