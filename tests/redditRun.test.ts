@@ -22,6 +22,12 @@ let calls: CallOptions[];
 let published: { alias: string; markdown: string }[];
 let fetchCount: number;
 
+const commentFeed = `<feed xmlns="http://www.w3.org/2005/Atom">${Array.from(
+  { length: 5 },
+  (_, index) =>
+    `<entry><author><name>/u/user${index}</name></author><content type="html">&lt;p&gt;comment ${index}&lt;/p&gt;</content><id>t1_c${index}</id><link href="https://reddit.test/c${index}"/><published>2026-11-04T00:00:00+00:00</published><title>c</title></entry>`,
+).join('')}</feed>`;
+
 type Scorer = (posts: { id: string }[], attempt: number) => unknown;
 const scoreAll =
   (score: number): Scorer =>
@@ -33,8 +39,9 @@ function makeDeps(
   const scorer = options.scorer ?? scoreAll(4);
   let scoringAttempts = 0;
   const deps: Deps = {
-    fetch: (async () => {
+    fetch: (async (url: string) => {
       fetchCount++;
+      if (url.includes('/comments/')) return new Response(commentFeed);
       return new Response(feedXml);
     }) as unknown as typeof fetch,
     sleep: async () => {},

@@ -43,6 +43,7 @@ interface SonnetPost {
 
 interface HarnessOptions {
   feedXml?: string;
+  topic?: string;
   respondComments?: (url: string) => Response;
   summarize?: (posts: SonnetPost[], attempt: number) => unknown;
 }
@@ -77,7 +78,7 @@ function makeDeps(options: HarnessOptions = {}): Deps {
           items: (JSON.parse(user) as { id: string }[]).map(({ id }) => ({
             id,
             score: 4,
-            topic: 'claude-code',
+            topic: options.topic ?? 'claude-code',
           })),
         };
       const posts = sonnetPostsFrom(user);
@@ -191,15 +192,56 @@ test('selectPosts treats orca as one group whatever the subreddit', () => {
   );
 });
 
-test('run fetches comments and summarizes only the selected posts, at most 10', async () => {
+test('collect drops posts ranked below 10 in a top feed and keeps rankless ones', async () => {
+  const ids = Array.from({ length: 12 }, (_, index) => `p${index}`);
+
+  const ranked = await collect(config.feeds, 'ua', {}, makeDeps({ feedXml: postFeed(...ids) }));
+  const search = await collect(
+    ['https://reddit.test/search.rss?q=orca'],
+    'ua',
+    {},
+    makeDeps({ feedXml: postFeed(...ids) }),
+  );
+
+  assert.deepEqual(
+    ranked.posts.map((post) => post.rank),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  );
+  assert.equal(search.posts.length, 12);
+});
+
+test('run fetches comments for 10 candidates and puts at most 7 in the note, marking only those as seen', async () => {
   const ids = Array.from({ length: 12 }, (_, index) => `p${index}`);
 
   const note = await runNote({ feedXml: postFeed(...ids) });
 
   assert.equal(requests.filter((url) => url.includes('/comments/')).length, 10);
-  assert.equal(sonnetPosts[0].length, 10);
-  assert.equal(note.match(/^### /gm)?.length, 10);
-  assert.equal(Object.keys(load('reddit_seen', {})).length, 12);
+  assert.equal(sonnetPosts[0].length, 7);
+  assert.equal(note.match(/^### /gm)?.length, 7);
+  assert.equal(Object.keys(load('reddit_seen', {})).length, 7);
+});
+
+test('run leaves out a post with fewer than 5 comments and does not mark it as seen', async () => {
+  const note = await runNote({
+    feedXml: postFeed('aaa', 'bbb'),
+    respondComments: (url) =>
+      new Response(
+        commentFeed(url.match(/comments\/(\w+)/)?.[1] ?? '', url.includes('bbb') ? 4 : 5),
+      ),
+  });
+
+  assert.equal(note.match(/^### /gm)?.length, 1);
+  assert.deepEqual(Object.keys(load('reddit_seen', {})), ['t3_aaa']);
+});
+
+test('run keeps an orca post whatever its comment count', async () => {
+  const note = await runNote({
+    topic: 'orca',
+    feedXml: postFeed('aaa'),
+    respondComments: () => new Response(commentFeed('aaa', 0)),
+  });
+
+  assert.equal(note.match(/^### /gm)?.length, 1);
 });
 
 test('run requests the comment feed of the post url sorted by top', async () => {
@@ -218,7 +260,7 @@ test('run renders each post with its metrics, highlight and comment summary unde
         '',
         `### [Title of t3_aaa](${postUrl('aaa')})`,
         '',
-        'r/ClaudeAI · 💬 5 · 今日熱門 #1',
+        'r/ClaudeAI · 💬 5 · 本週熱門 #1',
         '',
         '**重點**：highlight of t3_aaa',
         '',
@@ -255,14 +297,14 @@ test('run does not count AutoModerator or removed comments', async () => {
     feedXml: postFeed('aaa'),
     respondComments: () =>
       new Response(
-        commentFeed('aaa', 3, [
+        commentFeed('aaa', 5, [
           feedEntry('t1_bot', '/u/AutoModerator', 'I am a bot'),
           feedEntry('t1_gone', '/u/x', '[removed]'),
         ]),
       ),
   });
 
-  assert.match(note, /💬 3 /);
+  assert.match(note, /💬 5 /);
   assert.ok(!sonnetPosts[0][0].comments.includes('I am a bot'));
   assert.ok(!sonnetPosts[0][0].comments.includes('[removed]'));
 });
@@ -279,6 +321,7 @@ test('run shows 500+ when the comment feed reaches its limit and sends Sonnet on
 
 test('run sends no comments and writes a fixed line when fewer than 3 remain', async () => {
   const note = await runNote({
+    topic: 'orca',
     feedXml: postFeed('aaa'),
     respondComments: () => new Response(commentFeed('aaa', 2)),
   });
@@ -291,12 +334,13 @@ test('run sends no comments and writes a fixed line when fewer than 3 remain', a
 
 test('run warns at the top and marks the post when its comments cannot be fetched', async () => {
   const note = await runNote({
+    topic: 'orca',
     feedXml: postFeed('aaa'),
     respondComments: () => new Response('nope', { status: 500 }),
   });
 
   assert.match(note, /> ⚠️ .*aaa.*HTTP 500/);
-  assert.match(note, /r\/ClaudeAI · 留言數未知 · 今日熱門 #1/);
+  assert.match(note, /r\/ClaudeAI · 留言數未知 · 本週熱門 #1/);
   assert.match(note, /\*\*留言\*\*：留言抓取失敗/);
   assert.deepEqual(sonnetPosts[0][0].comments, []);
 });
@@ -351,6 +395,13 @@ test('run writes the empty message when Sonnet omits every post', async () => {
   const note = await runNote({ summarize: () => ({ items: [] }) });
 
   assert.match(note, /今日無值得一看的貼文/);
+});
+
+test('the score prompt limits the general dev subreddits to AI-related posts', () => {
+  const prompt = readFileSync('prompts/redditScore.md', 'utf8');
+
+  for (const name of ['programming', 'webdev', 'devops', 'GithubActions'])
+    assert.ok(prompt.includes(`r/${name}`), name);
 });
 
 test('the digest prompt tells Sonnet to treat comments as data', () => {
