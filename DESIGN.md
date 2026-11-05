@@ -163,9 +163,11 @@ A warm stone neutral ground with a single blue ink and a single red correction c
 
 A single centered column, at most 64rem wide, with 1rem padding on every side. Sections stack vertically in a fixed order, and each title adds 2rem above it. There is no grid and no sidebar.
 
-Tables span the full column. A table that is too wide, such as the PR table with many members, scrolls sideways inside its own container and never makes the page scroll. Charts scale to the column width through their `viewBox` (800 × 260), keeping their aspect ratio. The layout is the same on phones, only narrower.
+Tables span the full column. A table that is too wide, such as the PR table with many members, scrolls sideways inside its own container and never makes the page scroll. The container can take focus (`tabindex="0"`, `role="region"`, an `aria-label` naming the table), so the keyboard can scroll it. Charts scale to the column width through their `viewBox` (800 × 272), keeping their aspect ratio. The layout is the same on phones, only narrower.
 
 Spacing is a short scale: 0.4rem and 0.6rem inside rows and list items, 1rem for the page edge and gaps, and 2rem between sections. Three small steps serve tight spots: 0.25rem between legend rows, 0.3rem between a legend marker and its name, and 0.5rem for gaps in the date form and under captions.
+
+Each page ends with a muted line, 「頁面產生於 {Taipei time}」, so a page left open in a tab shows how old it is. The pages do not refresh themselves: a refresh would close opened warnings and reset the date form.
 
 Each page is one `<main>` landmark. On the status page the title and the link to the other page share one wrapping row. Links to the other page and the range choices sit in labelled `<nav>` elements. Links and form controls keep at least 24px of room to tap.
 
@@ -189,7 +191,8 @@ The working surface of every page: plain and dense.
 
 - **Cells:** data type size, 0.4rem × 0.6rem padding, left-aligned, top-aligned, a 1px ruled line underneath.
 - **Caption:** pencil gray, above the table, and it also says how to read it (for example "— 表示該週尚未抓取").
-- **Row headers:** use `<th scope="row">` for the week or job, in regular weight on the status page.
+- **Row headers:** use `<th scope="row">` for the week or job, in regular weight on the status page. They stay fixed at the left edge while the table scrolls sideways (on a failed row they take the correction wash, so the paper color never covers it).
+- **PR table columns:** 週, 合計, 人均, then one column per member, so the team numbers are the first to show on a phone. The caption says the average uses the current member list.
 - **Run log columns:** Job, 結果, 開始時間, 花費, 警告, 筆記, 耗時, so the columns that matter are the first to show on a phone.
 - **Failed row:** correction wash fills the row, the text turns correction red, and the error message sits in its own full-width row under it, so it never squeezes into a narrow column on a phone. A visually hidden "{job} 錯誤：" starts that row, so a screen reader knows whose error it is. A link inside a failed row takes the row's color and is underlined.
 - **Warnings:** a count that opens in place (`<details>`) to the list of warnings.
@@ -227,7 +230,7 @@ A hand-drawn inline SVG with `role="img"` and an `aria-label` that names the mea
 
 ### Range Picker
 
-Links for 12 / 26 / 52 weeks in a labelled `<nav>`, with the active choice in bold and `aria-current="true"` instead of a link. Below them, a native GET form with two `type="date"` inputs (no later than today) and a native submit button, in a wrapping flex row with 0.5rem gaps. Native controls are left unstyled except for a 2rem minimum height. When the requested range is invalid, a bold line in the normal text color says so and names the range shown instead; it is not an error state, so it does not use correction red.
+Links for 12 / 26 / 52 weeks in a labelled `<nav>`, with the active choice in bold and `aria-current="true"` instead of a link. A custom range adds a last, current item 「自訂 from – to」 and leaves all three presets as links. The note on what is counted is a muted line under the title, before the update line. Below them, a native GET form with two `type="date"` inputs (no later than today) and a native submit button, in a wrapping flex row with 0.5rem gaps. Native controls are left unstyled except for a 2rem minimum height. When the requested range is invalid, a bold line in the normal text color says so and names the range shown instead; it is not an error state, so it does not use correction red.
 
 ### Links
 
