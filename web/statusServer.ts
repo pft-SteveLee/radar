@@ -9,7 +9,6 @@ import { parseRange, readWeeks, renderPrPage } from './prStats.ts';
 import { renderPage, summarizeMonth } from './status.ts';
 
 const MONTHLY_BUDGET_USD = 100;
-const RUNS_SHOWN = 30;
 const MAX_AGE_HOURS = { pr_stats: 26, reddit_digest: 26, changelog_watch: 8 * 24 };
 
 function prMembers(): string[] {
@@ -17,7 +16,11 @@ function prMembers(): string[] {
     const config = parseYaml(
       readFileSync(join(process.env.CONFIG_DIR ?? 'config', 'prStats.yaml'), 'utf8'),
     ) as { members?: unknown } | null;
-    return Array.isArray(config?.members) ? config.members.map(String) : [];
+    if (!Array.isArray(config?.members)) return [];
+    const firstSpelling = new Map<string, string>();
+    for (const member of config.members.map(String))
+      if (!firstSpelling.has(member.toLowerCase())) firstSpelling.set(member.toLowerCase(), member);
+    return [...firstSpelling.values()];
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw error;
@@ -27,7 +30,7 @@ function prMembers(): string[] {
 function statusPage(): string {
   return renderPage({
     summary: summarizeMonth(readCostLines(), new Date()),
-    runs: readRuns(RUNS_SHOWN),
+    runs: readRuns(Number.POSITIVE_INFINITY),
     budgetUsd: MONTHLY_BUDGET_USD,
     now: new Date(),
     maxAgeHours: MAX_AGE_HOURS,

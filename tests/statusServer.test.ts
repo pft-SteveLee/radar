@@ -119,3 +119,64 @@ test('a corrupt run log gives a 500 and the server keeps answering', async () =>
   writeFileSync(join(outputDir, 'runs.jsonl'), '');
   assert.equal((await fetch(baseUrl)).status, 200);
 });
+
+test('GET /prs still answers when one week file is corrupt, and labels that week', async () => {
+  const configDir = mkdtempSync(join(tmpdir(), 'radar-config-'));
+  process.env.CONFIG_DIR = configDir;
+  writeFileSync(join(configDir, 'prStats.yaml'), 'members: [alice]\n');
+  const today = new Date().toLocaleDateString('sv', { timeZone: 'Asia/Taipei' });
+  const week = isoWeek(today);
+  mkdirSync(join(outputDir, 'prStats'));
+  writeFileSync(join(outputDir, 'prStats', `${week}.json`), '{broken');
+
+  const response = await fetch(`${baseUrl}/prs?weeks=12`);
+
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), new RegExp(`${week}（進行中）（讀取失敗）`));
+});
+
+test('GET /prs counts a member once when the list repeats a login in another case', async () => {
+  const configDir = mkdtempSync(join(tmpdir(), 'radar-config-'));
+  process.env.CONFIG_DIR = configDir;
+  writeFileSync(join(configDir, 'prStats.yaml'), 'members: [Alice, alice]\n');
+  const today = new Date().toLocaleDateString('sv', { timeZone: 'Asia/Taipei' });
+  const week = isoWeek(today);
+  mkdirSync(join(outputDir, 'prStats'));
+  writeFileSync(
+    join(outputDir, 'prStats', `${week}.json`),
+    JSON.stringify({ week, fetchedAt: today, counts: { ALICE: 7 } }),
+  );
+
+  const html = await (await fetch(`${baseUrl}/prs?weeks=12`)).text();
+
+  assert.equal(html.match(/<th scope="col">alice<\/th>/gi)?.length, 1);
+  assert.match(
+    html,
+    new RegExp(`<th scope="row">${week}（進行中）</th><td>7</td><td>7</td><td>7</td>`),
+  );
+});
+
+test('GET / measures freshness over all runs, not only the 30 shown', async () => {
+  const run = (job: string, startedAt: string) =>
+    JSON.stringify({
+      job,
+      startedAt,
+      finishedAt: startedAt,
+      status: 'ok',
+      error: null,
+      warnings: [],
+      costUsd: 0,
+      url: null,
+    });
+  const recent = new Date().toISOString();
+  const lines = [
+    run('pr_stats', recent),
+    ...Array.from({ length: 30 }, () => run('reddit_digest', recent)),
+  ];
+  writeFileSync(join(outputDir, 'runs.jsonl'), `${lines.join('\n')}\n`);
+
+  const html = await (await fetch(baseUrl)).text();
+
+  assert.match(html, /pr_stats 上次成功/);
+  assert.doesNotMatch(html, /pr_stats 尚無成功紀錄/);
+});
