@@ -50,7 +50,13 @@ td { font-variant-numeric: tabular-nums; }
 summary { display: list-item; min-height: 1.5rem; white-space: nowrap; cursor: pointer; }
 input, button { min-height: 2rem; font: inherit; }
 .hint { display: none; }
-@media (max-width: 40rem) { .hint { display: inline; } }`;
+@media (max-width: 40rem) { .hint { display: inline; } }
+.stale { background: var(--bad-bg); color: var(--bad); font-weight: 600; padding: 0.4rem 0.6rem; }
+.stale a { color: inherit; text-decoration: underline; }
+tr.failed { background: var(--bad-bg); color: var(--bad); }
+tr.failed a { color: inherit; text-decoration: underline; }
+.over { color: var(--bad); font-weight: 600; }
+:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }`;
 
 const dollars = (usd: number) => `$${usd.toFixed(2)}`;
 
@@ -64,17 +70,18 @@ function runRow(run: RunRecord): string {
   const failed = run.status === 'failed';
   const note =
     run.url && /^https?:\/\//.test(run.url) ? `<a href="${escapeHtml(run.url)}">筆記</a>` : '—';
+  const job = escapeHtml(run.job);
   const detail = failed
-    ? `\n<tr class="failed"><td colspan="7" class="error">${escapeHtml(run.error || '無錯誤訊息')}</td></tr>`
+    ? `\n<tr class="failed"><td colspan="7" class="error"><span class="visually-hidden">${job} 錯誤：</span>${escapeHtml(run.error || '無錯誤訊息')}</td></tr>`
     : '';
   return `<tr${failed ? ' class="failed"' : ''}>
-<td>${escapeHtml(run.job)}</td>
-<td>${taipeiTime(run.startedAt)}</td>
-<td>${duration(run)}</td>
+<th scope="row">${job}</th>
 <td>${failed ? '失敗' : '成功'}</td>
-<td>${warningsCell(run.warnings)}</td>
+<td>${taipeiTime(run.startedAt)}</td>
 <td>${dollars(run.costUsd)}</td>
+<td>${warningsCell(run.warnings)}</td>
 <td>${note}</td>
+<td>${duration(run)}</td>
 </tr>${detail}`;
 }
 
@@ -91,7 +98,17 @@ const ERROR_PREVIEW_LENGTH = 80;
 const shorten = (text: string, limit: number) =>
   text.length > limit ? `${text.slice(0, limit)}…` : text;
 
-function freshnessItem(job: string, limitHours: number, runs: RunRecord[], now: Date): string {
+interface FreshnessItem {
+  html: string;
+  problem: boolean;
+}
+
+function freshnessItem(
+  job: string,
+  limitHours: number,
+  runs: RunRecord[],
+  now: Date,
+): FreshnessItem {
   const lastSuccess = runs.find((run) => run.job === job && run.status === 'ok');
   const lastFailure = runs.find(
     (run) =>
@@ -100,17 +117,22 @@ function freshnessItem(job: string, limitHours: number, runs: RunRecord[], now: 
       (!lastSuccess || Date.parse(run.startedAt) > Date.parse(lastSuccess.startedAt)),
   );
   const reason = lastFailure
-    ? `，最近一次：${taipeiTime(lastFailure.startedAt)} 失敗：${escapeHtml(shorten(lastFailure.error || '無錯誤訊息', ERROR_PREVIEW_LENGTH))}`
+    ? `，最近一次：${taipeiTime(lastFailure.startedAt)} 失敗：${escapeHtml(shorten(lastFailure.error || '無錯誤訊息', ERROR_PREVIEW_LENGTH))}（<a href="#runs">詳見執行紀錄</a>）`
     : '';
   const overdue = `，已逾時（上限 ${limitHours} 小時）`;
   if (!lastSuccess)
-    return `<li class="stale">${escapeHtml(job)} 尚無成功紀錄${overdue}${reason}</li>`;
+    return {
+      html: `<li class="stale">${escapeHtml(job)} 尚無成功紀錄${overdue}${reason}</li>`,
+      problem: true,
+    };
   const ageMs = now.getTime() - Date.parse(lastSuccess.startedAt);
   const hours = Math.max(0, Math.floor(ageMs / 3_600_000));
   const text = `${escapeHtml(job)} 上次成功：${hours} 小時前（${taipeiTime(lastSuccess.startedAt)}）`;
-  return ageMs > limitHours * 3_600_000
-    ? `<li class="stale">${text}${overdue}${reason}</li>`
-    : `<li>${text}${reason}</li>`;
+  const stale = ageMs > limitHours * 3_600_000;
+  return {
+    html: stale ? `<li class="stale">${text}${overdue}${reason}</li>` : `<li>${text}${reason}</li>`,
+    problem: stale || lastFailure !== undefined,
+  };
 }
 
 function warningsCell(warnings: string[]): string {
@@ -129,9 +151,18 @@ function budgetLine(totalUsd: number, budgetUsd: number): string {
 }
 
 export function renderPage({ summary, runs, budgetUsd, now, maxAgeHours }: PageInput): string {
-  const monitored = Object.entries(maxAgeHours).map(([job, limitHours]) =>
+  const items = Object.entries(maxAgeHours).map(([job, limitHours]) =>
     freshnessItem(job, limitHours, runs, now),
   );
+  const problemCount = items.filter((item) => item.problem).length;
+  const monitored = [
+    ...items.filter((item) => item.problem),
+    ...items.filter((item) => !item.problem),
+  ].map((item) => item.html);
+  const verdict =
+    problemCount === 0
+      ? '<p class="verdict">全部正常</p>'
+      : `<p class="verdict stale">${problemCount} 個 job 需要處理</p>`;
   const unmonitored = [
     ...new Set([...runs.map((run) => run.job), ...summary.byJob.map((entry) => entry.job)]),
   ]
@@ -139,7 +170,10 @@ export function renderPage({ summary, runs, budgetUsd, now, maxAgeHours }: PageI
     .map((job) => `<li class="unmonitored">${escapeHtml(job)} 未設定新鮮度上限</li>`);
   const freshness = [...monitored, ...unmonitored].join('\n');
   const jobRows = summary.byJob
-    .map((entry) => `<tr><td>${escapeHtml(entry.job)}</td><td>${dollars(entry.usd)}</td></tr>`)
+    .map(
+      (entry) =>
+        `<tr><th scope="row">${escapeHtml(entry.job)}</th><td>${dollars(entry.usd)}</td></tr>`,
+    )
     .join('\n');
   const costTable = summary.byJob.length
     ? `<div class="scroll"><table>
@@ -154,7 +188,7 @@ ${jobRows}
   const runTable = shownRuns.length
     ? `<div class="scroll"><table>
 <caption>最近 ${shownRuns.length} 次執行<span class="hint">（可左右捲動）</span></caption>
-<thead><tr><th scope="col">Job</th><th scope="col">開始時間</th><th scope="col">耗時</th><th scope="col">結果</th><th scope="col">警告</th><th scope="col">花費</th><th scope="col">筆記</th></tr></thead>
+<thead><tr><th scope="col">Job</th><th scope="col">結果</th><th scope="col">開始時間</th><th scope="col">花費</th><th scope="col">警告</th><th scope="col">筆記</th><th scope="col">耗時</th></tr></thead>
 <tbody>
 ${shownRuns.map(runRow).join('\n')}
 </tbody>
@@ -169,29 +203,32 @@ ${shownRuns.map(runRow).join('\n')}
 <title>radar 狀態</title>
 <style>
 ${BASE_CSS}
+header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; }
 progress { width: 100%; height: 0.75rem; accent-color: var(--accent); }
-tr.failed { background: var(--bad-bg); color: var(--bad); }
-tr.failed a { color: inherit; text-decoration: underline; }
+tbody th { font-weight: 400; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .freshness { list-style: none; padding: 0; }
 .freshness li { padding: 0.4rem 0.6rem; overflow-wrap: anywhere; }
 .freshness li.unmonitored { color: var(--muted); }
-.freshness li.stale { background: var(--bad-bg); color: var(--bad); font-weight: 600; }
 .error { word-break: break-word; }
-.over { color: var(--bad); font-weight: 600; }
 </style>
 </head>
 <body>
 <main>
+<header>
 <h1>radar 狀態</h1>
 <nav aria-label="頁面"><a href="/prs">PR 趨勢</a></nav>
+</header>
+<h2>各 job 狀態</h2>
+${verdict}
 <ul class="freshness">
 ${freshness}
 </ul>
 <h2>${summary.month} 花費</h2>
 ${budgetLine(summary.totalUsd, budgetUsd)}
-<progress value="${summary.totalUsd.toFixed(2)}" max="${budgetUsd}" aria-label="本月花費佔額度"></progress>
+<progress value="${summary.totalUsd}" max="${budgetUsd}" aria-hidden="true"></progress>
 ${costTable}
-<h2>執行紀錄</h2>
+<h2 id="runs">執行紀錄</h2>
 ${runTable}
 </main>
 </body>
