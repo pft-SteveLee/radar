@@ -164,7 +164,7 @@ test('renderPage declares light and dark form controls, landmarks and roomy link
   assert.match(html, /<nav aria-label="頁面"><a href="\/prs">PR 趨勢<\/a><\/nav>/);
   assert.match(html, /nav a \{ display: inline-block; padding: 0\.4rem 0\.5rem; \}/);
   assert.match(html, /nav strong \{ display: inline-block; padding: 0\.4rem 0\.5rem; \}/);
-  assert.match(html, /th\[scope="row"\] \{ white-space: nowrap; \}/);
+  assert.match(html, /th\[scope="row"\] \{ white-space: nowrap;/);
 });
 
 test('renderPage keeps a link in a failed row readable on the red wash', () => {
@@ -269,7 +269,10 @@ test('renderPage keeps a long error out of the freshness line and in the run row
 });
 
 test('renderPage puts the cost table in a scroll container and says when nothing was spent', () => {
-  assert.match(page([run()]), /<div class="scroll"><table>\s*<caption>各 job 本月花費/);
+  assert.match(
+    page([run()]),
+    /<div class="scroll" tabindex="0" role="region" aria-label="各 job 本月花費"><table>\s*<caption>各 job 本月花費/,
+  );
   assert.match(pageWith([], []), /本月尚無花費/);
   assert.doesNotMatch(pageWith([], []), /各 job 本月花費/);
 });
@@ -390,4 +393,22 @@ test('renderPage keeps state styles in the shared sheet and shows keyboard focus
   assert.match(html, /\.over \{ color: var\(--bad\); font-weight: 600; \}/);
   assert.match(html, /:focus-visible \{ outline: 2px solid currentColor; outline-offset: 2px; \}/);
   assert.match(html, /\.visually-hidden \{/);
+});
+
+test('renderPage lets the run table scroll by keyboard and keeps the job column in view', () => {
+  const html = page([run()]);
+
+  assert.match(
+    html,
+    /<div class="scroll" tabindex="0" role="region" aria-label="最近執行紀錄"><table>/,
+  );
+  assert.match(
+    html,
+    /th\[scope="row"\] \{ white-space: nowrap; position: sticky; left: 0; background: var\(--bg\); \}/,
+  );
+  assert.match(html, /tr\.failed th \{ background: var\(--bad-bg\); \}/);
+});
+
+test('renderPage says when the page was made', () => {
+  assert.match(page([run()]), /<\/main>\s*<footer>頁面產生於 2026-11-04 13:00<\/footer>/);
 });

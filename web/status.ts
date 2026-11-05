@@ -44,7 +44,7 @@ th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(
 a { color: var(--accent); }
 nav a { display: inline-block; padding: 0.4rem 0.5rem; }
 nav strong { display: inline-block; padding: 0.4rem 0.5rem; }
-th[scope="row"] { white-space: nowrap; }
+th[scope="row"] { white-space: nowrap; position: sticky; left: 0; background: var(--bg); }
 td a { display: inline-block; min-height: 1.5rem; white-space: nowrap; }
 td { font-variant-numeric: tabular-nums; }
 summary { display: list-item; min-height: 1.5rem; white-space: nowrap; cursor: pointer; }
@@ -55,8 +55,10 @@ input, button { min-height: 2rem; font: inherit; }
 .stale a { color: inherit; text-decoration: underline; }
 tr.failed { background: var(--bad-bg); color: var(--bad); }
 tr.failed a { color: inherit; text-decoration: underline; }
+tr.failed th { background: var(--bad-bg); }
 .over { color: var(--bad); font-weight: 600; }
-:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }`;
+:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+footer { color: var(--muted); margin-top: 2rem; }`;
 
 const dollars = (usd: number) => `$${usd.toFixed(2)}`;
 
@@ -176,7 +178,7 @@ export function renderPage({ summary, runs, budgetUsd, now, maxAgeHours }: PageI
     )
     .join('\n');
   const costTable = summary.byJob.length
-    ? `<div class="scroll"><table>
+    ? `<div class="scroll" tabindex="0" role="region" aria-label="各 job 本月花費"><table>
 <caption>各 job 本月花費</caption>
 <thead><tr><th scope="col">Job</th><th scope="col">花費</th></tr></thead>
 <tbody>
@@ -186,7 +188,7 @@ ${jobRows}
     : '<p>本月尚無花費</p>';
   const shownRuns = runs.slice(0, RUNS_SHOWN);
   const runTable = shownRuns.length
-    ? `<div class="scroll"><table>
+    ? `<div class="scroll" tabindex="0" role="region" aria-label="最近執行紀錄"><table>
 <caption>最近 ${shownRuns.length} 次執行<span class="hint">（可左右捲動）</span></caption>
 <thead><tr><th scope="col">Job</th><th scope="col">結果</th><th scope="col">開始時間</th><th scope="col">花費</th><th scope="col">警告</th><th scope="col">筆記</th><th scope="col">耗時</th></tr></thead>
 <tbody>
@@ -231,6 +233,7 @@ ${costTable}
 <h2 id="runs">執行紀錄</h2>
 ${runTable}
 </main>
+<footer>頁面產生於 ${taipeiTime(now.toISOString())}</footer>
 </body>
 </html>
 `;

@@ -82,11 +82,11 @@ test('renderPrPage shows the weekly count, total and average, 0 when a fetched w
 
   assert.match(
     html,
-    /<tr><th scope="row">2026-W43<\/th><td>3<\/td><td>1<\/td><td>4<\/td><td>2<\/td><\/tr>/,
+    /<tr><th scope="row">2026-W43<\/th><td>4<\/td><td>2<\/td><td>3<\/td><td>1<\/td><\/tr>/,
   );
   assert.match(
     html,
-    /<tr><th scope="row">2026-W45（進行中）<\/th><td>5<\/td><td>0<\/td><td>5<\/td><td>2\.5<\/td><\/tr>/,
+    /<tr><th scope="row">2026-W45（進行中）<\/th><td>5<\/td><td>2\.5<\/td><td>5<\/td><td>0<\/td><\/tr>/,
   );
 });
 
@@ -397,4 +397,59 @@ test('renderPrPage draws a truncated week as an open point with no line to its n
 test('renderPrPage explains the open points only when the range has such a week', () => {
   assert.doesNotMatch(pageOf([{ week: '2026-W43', counts: { alice: 3 } }]), /空心點/);
   assert.match(page(['alice']), /空心點＝進行中或已截斷/);
+});
+
+const pageWithRange = (weeks: number | null) =>
+  renderPrPage({
+    weeks: [{ week: '2026-W45', counts: { alice: 1 } }],
+    members: ['alice'],
+    range: { from: '2026-10-19', to: TODAY, weeks, reason: null },
+    today: TODAY,
+    now: NOW,
+    maxAgeHours: 26,
+    updatedAt: null,
+  });
+
+test('renderPrPage puts the team total and average right after the week column', () => {
+  assert.match(
+    page(['alice', 'bob']),
+    /<th scope="col">週<\/th><th scope="col">合計<\/th><th scope="col">人均<\/th><th scope="col">alice<\/th><th scope="col">bob<\/th>/,
+  );
+});
+
+test('renderPrPage lets the table scroll by keyboard and keeps the week column in view', () => {
+  const html = page(['alice']);
+
+  assert.match(
+    html,
+    /<div class="scroll" tabindex="0" role="region" aria-label="每週 merged PR 數"><table>/,
+  );
+  assert.match(
+    html,
+    /th\[scope="row"\] \{ white-space: nowrap; position: sticky; left: 0; background: var\(--bg\); \}/,
+  );
+});
+
+test('renderPrPage marks a custom range as the current choice and leaves the presets as links', () => {
+  const custom = pageWithRange(null);
+
+  assert.match(custom, /<strong aria-current="true">自訂 2026-10-19 – 2026-11-04<\/strong>/);
+  assert.match(custom, /<a href="\/prs\?weeks=26">26 週<\/a>/);
+  assert.doesNotMatch(pageWithRange(26), /自訂 2026/);
+});
+
+test('renderPrPage says the average uses the current member list', () => {
+  assert.match(page(['alice']), /<caption>[^<]*人均以目前成員名單計算/);
+});
+
+test('renderPrPage puts the note about what is counted right under the title, before the update line', () => {
+  const html = page(['alice']);
+  const note = html.indexOf('只反映數量');
+
+  assert.match(html, /<small class="caveat">統計已合併/);
+  assert.ok(html.indexOf('</h1>') < note && note < html.indexOf('資料更新於'));
+});
+
+test('renderPrPage says when the page was made', () => {
+  assert.match(page(['alice']), /<\/main>\s*<footer>頁面產生於 2026-11-04 13:00<\/footer>/);
 });

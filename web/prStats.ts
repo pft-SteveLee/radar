@@ -306,12 +306,12 @@ function table(weeks: WeekCounts[], members: string[], currentWeek: string): str
     .map((week) => {
       const cells = members.map((member) => `<td>${countOf(week, member) ?? '—'}</td>`).join('');
       const label = `${week.week}${week.week === currentWeek ? '（進行中）' : ''}${week.truncated ? TRUNCATED_NOTE : ''}${week.corrupt ? '（讀取失敗）' : ''}`;
-      return `<tr><th scope="row">${label}</th>${cells}<td>${teamTotal(week, members) ?? '—'}</td><td>${teamAverage(week, members) ?? '—'}</td></tr>`;
+      return `<tr><th scope="row">${label}</th><td>${teamTotal(week, members) ?? '—'}</td><td>${teamAverage(week, members) ?? '—'}</td>${cells}</tr>`;
     })
     .join('\n');
-  return `<div class="scroll"><table>
-<caption>每週 merged PR 數，新的在上（— 表示該週尚未抓取）<span class="hint">（可左右捲動）</span></caption>
-<thead><tr><th scope="col">週</th>${header}<th scope="col">合計</th><th scope="col">人均</th></tr></thead>
+  return `<div class="scroll" tabindex="0" role="region" aria-label="每週 merged PR 數"><table>
+<caption>每週 merged PR 數，新的在上，人均以目前成員名單計算（— 表示該週尚未抓取）<span class="hint">（可左右捲動）</span></caption>
+<thead><tr><th scope="col">週</th><th scope="col">合計</th><th scope="col">人均</th>${header}</tr></thead>
 <tbody>
 ${rows}
 </tbody>
@@ -340,7 +340,9 @@ export function renderPrPage({
     choice === range.weeks
       ? `<strong aria-current="true">${choice} 週</strong>`
       : `<a href="/prs?weeks=${choice}">${choice} 週</a>`,
-  ).join(' · ');
+  );
+  if (range.weeks === null)
+    choices.push(`<strong aria-current="true">自訂 ${range.from} – ${range.to}</strong>`);
   const content = members.length
     ? `<h2>團隊</h2>\n${teamChart(weeks, members, currentWeek)}\n<h2>個人</h2>\n${memberChart(weeks, members, currentWeek)}\n${table(weeks, members, currentWeek)}`
     : '<p>請在 config/prStats.yaml 填 members（GitHub 帳號）</p>';
@@ -374,15 +376,16 @@ form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin:
 .legend li { display: flex; align-items: center; gap: 0.3rem; }
 .notice { font-weight: 600; }
 .chart-note { color: var(--muted); margin: 0 0 1rem; }
+.caveat { display: block; color: var(--muted); }
 </style>
 </head>
 <body>
 <main>
 <h1>每週 merged PR 數</h1>
 <nav aria-label="頁面"><a href="/">← 狀態</a></nav>
+<small class="caveat">統計已合併（merged）的 PR，依合併時間，台北時間週一到週日。PR 數只反映數量，不代表貢獻大小，建議只看趨勢。</small>
 ${updated}
-<p>統計已合併（merged）的 PR，依合併時間，台北時間週一到週日。PR 數只反映數量，不代表貢獻大小，建議只看趨勢。</p>
-<nav aria-label="顯示範圍">${choices}</nav>
+<nav aria-label="顯示範圍">${choices.join(' · ')}</nav>
 ${notice}
 <form method="get" action="/prs">
 <label>從 <input type="date" name="from" value="${range.from}" max="${today}"></label>
@@ -391,6 +394,7 @@ ${notice}
 </form>
 ${content}
 </main>
+<footer>頁面產生於 ${taipeiTime(now.toISOString())}</footer>
 </body>
 </html>
 `;
