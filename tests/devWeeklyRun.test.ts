@@ -241,3 +241,24 @@ test('the note file is the published text', async () => {
   );
   assert.equal(file, published[0].text);
 });
+
+test('a run with a failing repo does not keep the raw file, so a rerun fetches that repo again', async () => {
+  const first = setup({ merged: { 'o/b': [prNode(2)] }, failing: new Set(['o/a']) });
+  await run(options(['o/a', 'o/b'], false), first.deps);
+  assert.equal(load(`devWeekly/raw/${WEEK}`, null), null);
+  const second = setup({ merged: { 'o/a': [prNode(1)], 'o/b': [prNode(2)] } });
+  const result = await run(options(['o/a', 'o/b'], false), second.deps);
+  assert.ok(second.counts.graphql > 0);
+  assert.equal(load<RawWeek | null>(`devWeekly/raw/${WEEK}`, null)?.merged.length, 2);
+  assert.ok(!result.warnings.some((warning) => warning.includes('o/a')));
+});
+
+test('a raw file saved before the week ended is fetched again once the week is over', async () => {
+  const during = setup({ merged: { 'o/a': [prNode(1)] } });
+  during.deps.now = () => new Date('2026-11-06T01:00:00Z');
+  await run(options(['o/a'], false), during.deps);
+  const after = setup({ merged: { 'o/a': [prNode(1), prNode(2)] } });
+  await run(options(['o/a'], false), after.deps);
+  assert.ok(after.counts.graphql > 0);
+  assert.equal(load<RawWeek | null>(`devWeekly/raw/${WEEK}`, null)?.merged.length, 2);
+});

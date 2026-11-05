@@ -19,7 +19,8 @@ export interface RepoData {
   warnings: string[];
 }
 
-const QUERY = `query($q: String!, $endCursor: String) {
+const QUERY = `query($q: String!, $endCursor: String, $owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) { id }
   search(query: $q, type: ISSUE, first: 100, after: $endCursor) {
     issueCount
     pageInfo { hasNextPage endCursor }
@@ -76,6 +77,7 @@ const headers = (token: string, accept: string) => ({
 async function search(query: string, repo: string, token: string, deps: GithubDeps) {
   const nodes: Node[] = [];
   const warnings: string[] = [];
+  const [owner, name] = repo.split('/');
   let cursor: string | null = null;
   do {
     const response = await send(
@@ -83,7 +85,10 @@ async function search(query: string, repo: string, token: string, deps: GithubDe
       {
         method: 'POST',
         headers: { ...headers(token, 'application/json'), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: QUERY, variables: { q: query, endCursor: cursor } }),
+        body: JSON.stringify({
+          query: QUERY,
+          variables: { q: query, endCursor: cursor, owner, name },
+        }),
       },
       repo,
       deps,

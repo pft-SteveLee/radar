@@ -143,14 +143,14 @@ export async function groupPrs(
     })),
   );
   for (let attempt = 1; attempt <= GROUP_ATTEMPTS; attempt++) {
-    const answer = await deps.call({
-      job: JOB,
-      model: MODELS.sonnet,
-      system: withContext(readPrompt('devWeeklyGroup.md'), context),
-      user,
-      schema: GROUP_SCHEMA,
-    });
     try {
+      const answer = await deps.call({
+        job: JOB,
+        model: MODELS.sonnet,
+        system: withContext(readPrompt('devWeeklyGroup.md'), context),
+        user,
+        schema: GROUP_SCHEMA,
+      });
       return normalizeGroups(answer, merged);
     } catch (error) {
       if (!(error instanceof SyntaxError)) throw error;
@@ -250,7 +250,11 @@ function readContext(): string | null {
   }
 }
 
-async function collectAll(options: Options, deps: Deps, warnings: string[]): Promise<RawWeek> {
+async function collectAll(
+  options: Options,
+  deps: Deps,
+  warnings: string[],
+): Promise<{ raw: RawWeek; failedRepos: number }> {
   const raw: RawWeek = {
     week: options.week,
     fetchedAt: deps.now().toISOString(),
@@ -272,7 +276,7 @@ async function collectAll(options: Options, deps: Deps, warnings: string[]): Pro
   }
   if (errors.length === options.config.repos.length) throw new Error(errors[0]);
   warnings.push(...errors);
-  return raw;
+  return { raw, failedRepos: errors.length };
 }
 
 async function describeLargePrs(
@@ -315,11 +319,13 @@ async function describeLargePrs(
 export async function run(options: Options, deps: Deps): Promise<RunResult> {
   const startedAt = new Date().toISOString();
   const warnings: string[] = [];
+  const weekEnd = Date.parse(`${weekStart(options.week)}T00:00:00+08:00`) + 7 * DAY_MS;
   let raw = load<RawWeek | null>(rawName(options.week), null);
+  if (raw && Date.parse(raw.fetchedAt) < weekEnd) raw = null;
   if (!raw) {
-    raw = await collectAll(options, deps, warnings);
-    save(rawName(options.week), raw);
-    const weekEnd = new Date(`${weekStart(options.week)}T00:00:00Z`).getTime() + 7 * DAY_MS;
+    const collected = await collectAll(options, deps, warnings);
+    raw = collected.raw;
+    if (!collected.failedRepos) save(rawName(options.week), raw);
     if (deps.now().getTime() - weekEnd > OLD_WEEK_DAYS * DAY_MS)
       warnings.push(
         '這一週已經結束超過 7 天，「進行中」與 issue 顯示的是目前的狀態，不是那一週當時的',

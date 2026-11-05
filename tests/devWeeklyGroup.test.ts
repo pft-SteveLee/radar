@@ -151,3 +151,17 @@ test('groupPrs fails with a plain Error after two invalid answers', async () => 
     return true;
   });
 });
+
+test('groupPrs retries when the call itself throws a SyntaxError for unparseable model output', async () => {
+  let attempts = 0;
+  const deps = {
+    call: (async () => {
+      attempts++;
+      if (attempts === 1) throw new SyntaxError('Unexpected end of JSON input');
+      return validAnswer;
+    }) as never,
+  };
+  const features = await groupPrs(merged, {}, null, deps);
+  assert.equal(attempts, 2);
+  assert.equal(features.length, 1);
+});

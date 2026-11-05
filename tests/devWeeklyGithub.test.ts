@@ -169,3 +169,14 @@ test('fetchDiff asks for the diff media type and returns the text', async () => 
   assert.equal(seen[0].headers.Accept, 'application/vnd.github.diff');
   assert.equal(seen[0].headers.Authorization, 'Bearer token');
 });
+
+test('every search also looks the repository up, so a repo the token cannot see is an error and not an empty week', async () => {
+  const { deps, requests } = fakeDeps({});
+  await collectRepo('o/r', '2026-W45', 'token', deps);
+  assert.ok(requests.length >= 3);
+  for (const request of requests) {
+    assert.match(request.query, /repository\(owner: \$owner, name: \$name\)/);
+    const variables = request.variables as Record<string, unknown>;
+    assert.deepEqual([variables.owner, variables.name], ['o', 'r']);
+  }
+});
