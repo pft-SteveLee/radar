@@ -167,7 +167,7 @@ Tables span the full column. A table that is too wide, such as the PR table with
 
 Spacing is a short scale: 0.4rem and 0.6rem inside rows and list items, 1rem for the page edge and gaps, and 2rem between sections. Three small steps serve tight spots: 0.25rem between legend rows, 0.3rem between a legend marker and its name, and 0.5rem for gaps in the date form and under captions.
 
-Each page is one `<main>` landmark. Links to the other page and the range choices sit in labelled `<nav>` elements. Links and form controls keep at least 24px of room to tap.
+Each page is one `<main>` landmark. On the status page the title and the link to the other page share one wrapping row. Links to the other page and the range choices sit in labelled `<nav>` elements. Links and form controls keep at least 24px of room to tap.
 
 ## Elevation & Depth
 
@@ -189,8 +189,9 @@ The working surface of every page: plain and dense.
 
 - **Cells:** data type size, 0.4rem × 0.6rem padding, left-aligned, top-aligned, a 1px ruled line underneath.
 - **Caption:** pencil gray, above the table, and it also says how to read it (for example "— 表示該週尚未抓取").
-- **Row headers:** use `<th scope="row">` for the week or job.
-- **Failed row:** correction wash fills the row, the text turns correction red, and the error message sits in its own full-width row under it, so it never squeezes into a narrow column on a phone. A link inside a failed row takes the row's color and is underlined.
+- **Row headers:** use `<th scope="row">` for the week or job, in regular weight on the status page.
+- **Run log columns:** Job, 結果, 開始時間, 花費, 警告, 筆記, 耗時, so the columns that matter are the first to show on a phone.
+- **Failed row:** correction wash fills the row, the text turns correction red, and the error message sits in its own full-width row under it, so it never squeezes into a narrow column on a phone. A visually hidden "{job} 錯誤：" starts that row, so a screen reader knows whose error it is. A link inside a failed row takes the row's color and is underlined.
 - **Warnings:** a count that opens in place (`<details>`) to the list of warnings.
 - **Current week:** the newest week is marked 「（進行中）」, because its count is not final.
 - **Scrolling hint:** on narrow screens the caption adds 「（可左右捲動）」.
@@ -198,17 +199,18 @@ The working surface of every page: plain and dense.
 
 ### Freshness Line
 
-A plain list at the top of the status page, one line per job: "{job} 上次成功：N 小時前（time）".
+A list under the heading 各 job 狀態 at the top of the status page, one line per job: "{job} 上次成功：N 小時前（time）".
 
+- **Verdict:** one line above the list: "全部正常", or "N 個 job 需要處理" in the stale style. A job needs attention when it is overdue, has never succeeded, or its latest run failed. Jobs that need attention are listed first. A job without a limit is never counted.
 - **Normal:** body text with no marker.
 - **Stale:** correction wash, correction red, weight 600, ending with "，已逾時（上限 N 小時）".
-- **Latest failure:** when a run failed after the last success, the line ends with "，最近一次：time 失敗：error", in either state. The error is cut to its first 80 characters; the full text sits in the run log row.
+- **Latest failure:** when a run failed after the last success, the line ends with "，最近一次：time 失敗：error", in either state. The error is cut to its first 80 characters and followed by a link "詳見執行紀錄" to the run log; the full text sits in the run log row.
 - **Unmonitored job:** a job that has runs or cost but no limit gets a neutral muted line, "{job} 未設定新鮮度上限". It is never red: it says that nothing is watching, not that something is wrong.
 - **On `/prs`:** one line, "資料更新於 time", takes the same stale style, ending "，已逾時（上限 N 小時）", when `pr_stats` last succeeded longer ago than its limit.
 
 ### Budget Meter
 
-A native `<progress>` bar: full width, 0.75rem high, ink blue via `accent-color`. It sits right under the "$spent / $100（N%）" line, which states the same number in text. A spend under 1% reads "<1%", not 0%. Above the budget the line turns correction red, bold, and ends with "，已超支 $X" (the amount over). The native bar only fills, so the amount is stated in text.
+A native `<progress>` bar: full width, 0.75rem high, ink blue via `accent-color`. It sits right under the "$spent / $100（N%）" line, which states the same number in text. A spend under 1% reads "<1%", not 0%. Above the budget the line turns correction red, bold, and ends with "，已超支 $X" (the amount over). The native bar only fills, so the amount is stated in text. The bar is hidden from screen readers (`aria-hidden`) because that text already says the same, and its value is the unrounded spend, so a few cents draw as a sliver rather than an empty bar.
 
 ### Line Chart
 

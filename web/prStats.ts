@@ -321,7 +321,6 @@ svg.chart .gap-label { fill: var(--text); }
 form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0 1rem; }
 .legend { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; }
 .legend li { display: flex; align-items: center; gap: 0.3rem; }
-.stale { background: var(--bad-bg); color: var(--bad); font-weight: 600; padding: 0.4rem 0.6rem; }
 .notice { font-weight: 600; }
 </style>
 </head>

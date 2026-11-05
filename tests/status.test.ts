@@ -66,7 +66,7 @@ test('renderPage shows the month cost against the budget with a progress bar', (
   const html = page([]);
 
   assert.match(html, /\$12\.40 \/ \$100（12%）/);
-  assert.match(html, /<progress value="12\.40" max="100"/);
+  assert.match(html, /<progress value="12\.4" max="100"/);
 });
 
 test('renderPage lists the cost of every job this month', () => {
@@ -95,7 +95,7 @@ test('renderPage puts the error of a failed run in its own full-width row', () =
   assert.match(html, /<td>失敗<\/td>/);
   assert.match(
     html,
-    /<tr class="failed"><td colspan="7" class="error">CodiMD login failed<\/td><\/tr>/,
+    /<tr class="failed"><td colspan="7" class="error"><span class="visually-hidden">reddit_digest 錯誤：<\/span>CodiMD login failed<\/td><\/tr>/,
   );
 });
 
@@ -261,8 +261,11 @@ test('renderPage keeps a long error out of the freshness line and in the run row
   });
   const html = page([failed, run()], 12.4, '2026-11-05T09:00:00Z');
 
-  assert.match(html, /<li class="stale">[^<]*失敗：x{80}…<\/li>/);
-  assert.match(html, /<td colspan="7" class="error">x{200}<\/td>/);
+  assert.match(
+    html,
+    /<li class="stale">[^<]*失敗：x{80}…（<a href="#runs">詳見執行紀錄<\/a>）<\/li>/,
+  );
+  assert.match(html, /<td colspan="7" class="error"><span[^>]*>[^<]*<\/span>x{200}<\/td>/);
 });
 
 test('renderPage puts the cost table in a scroll container and says when nothing was spent', () => {
@@ -311,4 +314,80 @@ test('renderPage lists 30 runs but measures freshness over every run it is given
 
   assert.match(html, /最近 30 次執行/);
   assert.match(html, /reddit_digest 上次成功：5 小時前/);
+});
+
+test('renderPage makes the job the row header and orders the run columns by importance', () => {
+  const html = page([run()]);
+
+  assert.match(
+    html,
+    /<th scope="row">reddit_digest<\/th>\s*<td>成功<\/td>\s*<td>2026-11-04 07:30<\/td>\s*<td>\$0\.05<\/td>/,
+  );
+  assert.match(
+    html,
+    /<th scope="col">Job<\/th><th scope="col">結果<\/th><th scope="col">開始時間<\/th><th scope="col">花費<\/th><th scope="col">警告<\/th><th scope="col">筆記<\/th><th scope="col">耗時<\/th>/,
+  );
+  assert.match(html, /<tr><th scope="row">reddit_digest<\/th><td>\$12\.40<\/td><\/tr>/);
+  assert.match(html, /tbody th \{ font-weight: 400; \}/);
+});
+
+test('renderPage says all is well, or how many jobs need attention, above the job list', () => {
+  const ok = page([run()]);
+  const stale = page([run()], 12.4, '2026-11-05T09:00:00Z');
+  const failedAfterSuccess = page([
+    run({ status: 'failed', error: 'x', url: null, startedAt: '2026-11-04T04:00:00.000Z' }),
+    run(),
+  ]);
+  const neverRan = page([]);
+
+  assert.match(
+    ok,
+    /<h2>各 job 狀態<\/h2>\s*<p class="verdict">全部正常<\/p>\s*<ul class="freshness">/,
+  );
+  assert.match(stale, /<p class="verdict stale">1 個 job 需要處理<\/p>/);
+  assert.match(failedAfterSuccess, /<p class="verdict stale">1 個 job 需要處理<\/p>/);
+  assert.match(neverRan, /<p class="verdict stale">1 個 job 需要處理<\/p>/);
+});
+
+test('renderPage lists the jobs that need attention first', () => {
+  const html = renderPage({
+    summary: { month: '2026-11', totalUsd: 0, byJob: [] },
+    runs: [run({ job: 'b_job' })],
+    budgetUsd: 100,
+    now: new Date('2026-11-04T05:00:00Z'),
+    maxAgeHours: { a_job: 26, b_job: 26 },
+  });
+
+  assert.ok(html.indexOf('a_job 尚無成功紀錄') < html.indexOf('b_job 上次成功'));
+});
+
+test('renderPage puts the page link beside the title and links a failure to the run log', () => {
+  const failed = page([
+    run({ status: 'failed', error: 'boom', url: null, startedAt: '2026-11-04T04:00:00.000Z' }),
+    run(),
+  ]);
+
+  assert.match(failed, /<header>\s*<h1>radar 狀態<\/h1>\s*<nav aria-label="頁面">/);
+  assert.match(failed, /<h2 id="runs">執行紀錄<\/h2>/);
+  assert.match(failed, /失敗：boom（<a href="#runs">詳見執行紀錄<\/a>）/);
+  assert.doesNotMatch(page([run()]), /詳見執行紀錄/);
+});
+
+test('renderPage draws a tiny spend as a tiny bar and hides the bar from screen readers', () => {
+  const html = page([], 0.004);
+
+  assert.match(html, /<progress value="0\.004" max="100" aria-hidden="true"><\/progress>/);
+  assert.doesNotMatch(html, /progress[^>]*aria-label/);
+});
+
+test('renderPage keeps state styles in the shared sheet and shows keyboard focus', () => {
+  const html = page([run()]);
+
+  assert.match(
+    html,
+    /\n\.stale \{ background: var\(--bad-bg\); color: var\(--bad\); font-weight: 600; padding: 0\.4rem 0\.6rem; \}/,
+  );
+  assert.match(html, /\.over \{ color: var\(--bad\); font-weight: 600; \}/);
+  assert.match(html, /:focus-visible \{ outline: 2px solid currentColor; outline-offset: 2px; \}/);
+  assert.match(html, /\.visually-hidden \{/);
 });
