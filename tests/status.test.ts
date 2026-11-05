@@ -282,3 +282,33 @@ test('renderPage lets long text wrap, keeps targets roomy and aligns numbers', (
   );
   assert.match(html, /td \{ font-variant-numeric: tabular-nums; \}/);
 });
+
+test('renderPage goes red as soon as the last success is past the limit, not an hour later', () => {
+  const html = page([run()], 12.4, '2026-11-05T02:00:00Z');
+
+  assert.match(html, /class="stale"[^>]*>reddit_digest 上次成功：26 小時前/);
+});
+
+test('renderPage shows a dash for a duration that is negative or not a time', () => {
+  const html = page([
+    run({ finishedAt: '2026-11-03T23:00:00.000Z' }),
+    run({ finishedAt: 'garbage' }),
+  ]);
+
+  assert.doesNotMatch(html, /NaN|-\d+ 秒/);
+  assert.equal(html.match(/<td>—<\/td>/g)?.length, 2 + 2);
+});
+
+test('renderPage lists 30 runs but measures freshness over every run it is given', () => {
+  const newestFirst = [
+    ...Array.from({ length: 30 }, () =>
+      run({ job: 'other', status: 'failed', error: 'x', url: null }),
+    ),
+    run(),
+  ];
+
+  const html = page(newestFirst);
+
+  assert.match(html, /最近 30 次執行/);
+  assert.match(html, /reddit_digest 上次成功：5 小時前/);
+});

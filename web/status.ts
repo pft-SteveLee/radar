@@ -56,6 +56,7 @@ const dollars = (usd: number) => `$${usd.toFixed(2)}`;
 
 function duration(run: RunRecord): string {
   const seconds = Math.round((Date.parse(run.finishedAt) - Date.parse(run.startedAt)) / 1000);
+  if (!Number.isFinite(seconds) || seconds < 0) return '—';
   return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
 }
 
@@ -85,6 +86,7 @@ interface PageInput {
   maxAgeHours: Record<string, number>;
 }
 
+const RUNS_SHOWN = 30;
 const ERROR_PREVIEW_LENGTH = 80;
 const shorten = (text: string, limit: number) =>
   text.length > limit ? `${text.slice(0, limit)}…` : text;
@@ -103,9 +105,10 @@ function freshnessItem(job: string, limitHours: number, runs: RunRecord[], now: 
   const overdue = `，已逾時（上限 ${limitHours} 小時）`;
   if (!lastSuccess)
     return `<li class="stale">${escapeHtml(job)} 尚無成功紀錄${overdue}${reason}</li>`;
-  const hours = Math.floor((now.getTime() - Date.parse(lastSuccess.startedAt)) / 3_600_000);
+  const ageMs = now.getTime() - Date.parse(lastSuccess.startedAt);
+  const hours = Math.max(0, Math.floor(ageMs / 3_600_000));
   const text = `${escapeHtml(job)} 上次成功：${hours} 小時前（${taipeiTime(lastSuccess.startedAt)}）`;
-  return hours > limitHours
+  return ageMs > limitHours * 3_600_000
     ? `<li class="stale">${text}${overdue}${reason}</li>`
     : `<li>${text}${reason}</li>`;
 }
@@ -147,12 +150,13 @@ ${jobRows}
 </tbody>
 </table></div>`
     : '<p>本月尚無花費</p>';
-  const runTable = runs.length
+  const shownRuns = runs.slice(0, RUNS_SHOWN);
+  const runTable = shownRuns.length
     ? `<div class="scroll"><table>
-<caption>最近 ${runs.length} 次執行<span class="hint">（可左右捲動）</span></caption>
+<caption>最近 ${shownRuns.length} 次執行<span class="hint">（可左右捲動）</span></caption>
 <thead><tr><th scope="col">Job</th><th scope="col">開始時間</th><th scope="col">耗時</th><th scope="col">結果</th><th scope="col">警告</th><th scope="col">花費</th><th scope="col">筆記</th></tr></thead>
 <tbody>
-${runs.map(runRow).join('\n')}
+${shownRuns.map(runRow).join('\n')}
 </tbody>
 </table></div>`
     : '<p>尚無執行紀錄</p>';

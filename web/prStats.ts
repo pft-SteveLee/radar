@@ -6,13 +6,14 @@ export interface WeekCounts {
   week: string;
   counts: Record<string, number> | null;
   truncated?: boolean;
+  corrupt?: boolean;
 }
 
 export interface Range {
   from: string;
   to: string;
   weeks: number | null;
-  invalid: boolean;
+  reason: string | null;
 }
 
 const DAY_MS = 86_400_000;
@@ -67,37 +68,58 @@ const AXIS_DIGIT_WIDTH = 13;
 const TRUNCATED_NOTE = '（已截斷，數字偏低）';
 
 const isDay = (value: string | null): value is string =>
-  value !== null && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value));
+  value !== null &&
+  /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+  !Number.isNaN(Date.parse(value)) &&
+  new Date(`${value}T00:00:00Z`).toISOString().startsWith(value);
 const daysBefore = (day: string, days: number) =>
   new Date(Date.parse(`${day}T00:00:00Z`) - days * DAY_MS).toISOString().slice(0, 10);
 
 export function parseRange(query: URLSearchParams, today: string): Range {
   const from = query.get('from');
-  const to = query.get('to');
-  if (
-    isDay(from) &&
-    isDay(to) &&
-    from <= to &&
-    Date.parse(to) - Date.parse(from) <= MAX_RANGE_DAYS * DAY_MS
-  )
-    return { from, to, weeks: null, invalid: false };
+  const requestedTo = query.get('to');
+  let reason: string | null = null;
+  if (query.has('from') || query.has('to')) {
+    if (!isDay(from) || !isDay(requestedTo)) reason = '日期格式錯誤';
+    else {
+      const to = requestedTo > today ? today : requestedTo;
+      if (from > to) reason = '起日晚於迄日';
+      else if (Date.parse(to) - Date.parse(from) > MAX_RANGE_DAYS * DAY_MS) reason = '最長 3 年';
+      else return { from, to, weeks: null, reason: null };
+    }
+  }
   const requested = Number(query.get('weeks'));
   const weeksAreValid = WEEK_CHOICES.includes(requested);
+  if (reason === null && query.has('weeks') && !weeksAreValid) reason = 'weeks 只接受 12、26、52';
   const weeks = weeksAreValid ? requested : DEFAULT_WEEKS;
-  const invalid = query.has('from') || query.has('to') || (query.has('weeks') && !weeksAreValid);
-  return { from: daysBefore(today, (weeks - 1) * 7), to: today, weeks, invalid };
+  return { from: daysBefore(today, (weeks - 1) * 7), to: today, weeks, reason };
 }
+
+const lowercaseKeys = (counts: Record<string, number>) => {
+  const merged: Record<string, number> = {};
+  for (const [login, count] of Object.entries(counts))
+    merged[login.toLowerCase()] = (merged[login.toLowerCase()] ?? 0) + count;
+  return merged;
+};
 
 export function readWeeks(weeks: string[]): WeekCounts[] {
   const outputDir = process.env.OUTPUT_DIR ?? 'output';
   return weeks.map((week) => {
-    const file = load<WeekFile | null>(`prStats/${week}`, null, outputDir);
-    return { week, counts: file?.counts ?? null, truncated: file?.truncated === true };
+    try {
+      const file = load<WeekFile | null>(`prStats/${week}`, null, outputDir);
+      if (file === null) return { week, counts: null };
+      if (typeof file.counts !== 'object' || file.counts === null)
+        throw new Error('counts is not an object');
+      return { week, counts: lowercaseKeys(file.counts), truncated: file.truncated === true };
+    } catch (error) {
+      console.error(`prStats/${week}.json is unreadable`, error);
+      return { week, counts: null, corrupt: true };
+    }
   });
 }
 
 const countOf = (week: WeekCounts, member: string) =>
-  week.counts === null ? null : (week.counts[member] ?? 0);
+  week.counts === null ? null : (week.counts[member.toLowerCase()] ?? 0);
 
 interface Series {
   name: string;
@@ -114,13 +136,14 @@ const teamAverage = (week: WeekCounts, members: string[]) => {
   return total === null ? null : Math.round((total / members.length) * 10) / 10;
 };
 
-function unfetchedRuns(weeks: WeekCounts[]): [number, number][] {
-  const runs: [number, number][] = [];
+function unfetchedRuns(weeks: WeekCounts[]): [number, number, boolean][] {
+  const runs: [number, number, boolean][] = [];
   for (const [index, week] of weeks.entries()) {
     if (week.counts !== null) continue;
+    const corrupt = week.corrupt === true;
     const last = runs.at(-1);
-    if (last && last[1] === index - 1) last[1] = index;
-    else runs.push([index, index]);
+    if (last && last[1] === index - 1 && last[2] === corrupt) last[1] = index;
+    else runs.push([index, index, corrupt]);
   }
   return runs;
 }
@@ -142,14 +165,15 @@ function chart(
   const x = (index: number) => axisLeft + index * step;
   const y = (count: number) => CHART.top + (1 - count / highest) * plotHeight;
   const pendingIndex = weeks.findIndex((week) => week.week === currentWeek);
-  const bands = unfetchedRuns(weeks).map(([first, last]) => {
+  const bands = unfetchedRuns(weeks).map(([first, last, corrupt]) => {
     const left = Math.max(axisLeft, x(first) - step / 2);
     const right = Math.min(CHART.width - CHART.right, x(last) + step / 2);
+    const gapLabel = corrupt ? '讀取失敗' : '未抓取';
     const text =
       right - left >= GAP_LABEL_MIN_WIDTH
-        ? `<text x="${((left + right) / 2).toFixed(1)}" y="${CHART.top + plotHeight / 2}" text-anchor="middle" class="gap-label">未抓取</text>`
+        ? `<text x="${((left + right) / 2).toFixed(1)}" y="${CHART.top + plotHeight / 2}" text-anchor="middle" class="gap-label">${gapLabel}</text>`
         : '';
-    return `<rect x="${left.toFixed(1)}" y="${CHART.top}" width="${(right - left).toFixed(1)}" height="${plotHeight}" class="gap"><title>未抓取</title></rect>${text}`;
+    return `<rect x="${left.toFixed(1)}" y="${CHART.top}" width="${(right - left).toFixed(1)}" height="${plotHeight}" class="gap"><title>${gapLabel}</title></rect>${text}`;
   });
   const lines = series.map((line, lineIndex) => {
     const color = seriesColor(lineIndex);
@@ -231,7 +255,7 @@ function table(weeks: WeekCounts[], members: string[], currentWeek: string): str
     .reverse()
     .map((week) => {
       const cells = members.map((member) => `<td>${countOf(week, member) ?? '—'}</td>`).join('');
-      const label = `${week.week}${week.week === currentWeek ? '（進行中）' : ''}${week.truncated ? TRUNCATED_NOTE : ''}`;
+      const label = `${week.week}${week.week === currentWeek ? '（進行中）' : ''}${week.truncated ? TRUNCATED_NOTE : ''}${week.corrupt ? '（讀取失敗）' : ''}`;
       return `<tr><th scope="row">${label}</th>${cells}<td>${teamTotal(week, members) ?? '—'}</td><td>${teamAverage(week, members) ?? '—'}</td></tr>`;
     })
     .join('\n');
@@ -277,8 +301,8 @@ export function renderPrPage({
     : overdue
       ? `<p class="stale">資料更新於 ${taipeiTime(updatedAt)}，已逾時（上限 ${maxAgeHours} 小時）</p>`
       : `<p>資料更新於 ${taipeiTime(updatedAt)}</p>`;
-  const notice = range.invalid
-    ? `<p class="notice" role="status">日期區間無效，已改顯示近 ${range.weeks ?? DEFAULT_WEEKS} 週</p>`
+  const notice = range.reason
+    ? `<p class="notice" role="status">${range.reason}，已改顯示近 ${range.weeks} 週</p>`
     : '';
   return `<!doctype html>
 <html lang="zh-Hant">
