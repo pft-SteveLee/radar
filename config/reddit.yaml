@@ -2,15 +2,15 @@ userAgent: "radar/0.1 (personal Reddit digest)"
 # Reddit returns only 25 entries per feed unless limit is given; 100 is the verified maximum we use.
 topics:
   ai-coding:
-    - https://www.reddit.com/r/ClaudeAI/new.rss?limit=100
-    - https://www.reddit.com/r/ClaudeCode/new.rss?limit=100
-    - https://www.reddit.com/r/ChatGPTCoding/new.rss?limit=100
-    - https://www.reddit.com/r/cursor/new.rss?limit=100
-    - https://www.reddit.com/r/vibecoding/new.rss?limit=100
+    - https://www.reddit.com/r/ClaudeAI/top.rss?t=day&limit=100
+    - https://www.reddit.com/r/ClaudeCode/top.rss?t=day&limit=100
+    - https://www.reddit.com/r/ChatGPTCoding/top.rss?t=day&limit=100
+    - https://www.reddit.com/r/cursor/top.rss?t=day&limit=100
+    - https://www.reddit.com/r/vibecoding/top.rss?t=day&limit=100
   seo:
-    - https://www.reddit.com/r/SEO/new.rss?limit=100
-    - https://www.reddit.com/r/bigseo/new.rss?limit=100
-    - https://www.reddit.com/r/TechSEO/new.rss?limit=100
+    - https://www.reddit.com/r/SEO/top.rss?t=day&limit=100
+    - https://www.reddit.com/r/bigseo/top.rss?t=day&limit=100
+    - https://www.reddit.com/r/TechSEO/top.rss?t=day&limit=100
   orca:
     - https://www.reddit.com/search.rss?q=%22orca+ade%22&sort=new&limit=100
     - https://www.reddit.com/r/ClaudeAI/search.rss?q=orca&restrict_sr=1&sort=new&limit=100

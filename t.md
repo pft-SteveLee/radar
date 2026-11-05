@@ -81,30 +81,30 @@ radar/
 
 ## Job 1：Reddit 每日摘要
 
-每天早上 08:00（台北）把前 24 小時指定 subreddit 的新貼文整理成一篇 CodiMD 筆記，分主題列出值得看的 10–20 篇，附連結。月費估 $3–8。
+每天早上 08:00（台北）把前 24 小時指定 subreddit 的新貼文整理成一篇 CodiMD 筆記，分主題列出最多 10 篇，附連結、留言數、熱門排名和留言摘要。月費估 $3–8。
 
 **資料來源**
 
 | 主題 | Subreddits | 抓法 |
 | --- | --- | --- |
-| Claude Code / AI coding | r/ClaudeAI, r/ClaudeCode, r/ChatGPTCoding, r/cursor, r/vibecoding | `https://www.reddit.com/r/<sub>/new.rss` |
+| Claude Code / AI coding | r/ClaudeAI, r/ClaudeCode, r/ChatGPTCoding, r/cursor, r/vibecoding | `https://www.reddit.com/r/<sub>/top.rss?t=day` |
 | SEO | r/SEO, r/bigseo, r/TechSEO | 同上 |
 | Orca ADE | 搜尋 `orca ade` 的 `search.rss`，加上 r/ClaudeAI 內的關鍵字命中 | `https://www.reddit.com/search.rss?q=...&sort=new` |
 
-- RSS 只有標題、作者、內文（self post 會有）和連結，沒有留言和分數。只用 RSS，不接 Reddit API。
+- 貼文 RSS 只有標題、作者、內文（self post 會有）和連結，沒有留言和分數；留言另外抓每篇的留言 RSS。按讚數和閱讀數拿不到。只用 RSS，不接 Reddit API。
 - 設定一個自訂 User-Agent，Reddit 對預設 UA 會限流。
 
 **流程**
 
 1. 抓所有 feed，合併，用 `state/reddit_seen.json` 過濾已處理的 post id。
 2. Haiku 5.5：對每篇給 0–5 分 + 主題標籤（claude-code / ai-coding / seo / orca / other），一次批次 50 篇送進去，回 JSON。
-3. 取 ≥ 3 分的貼文（通常 15–30 篇），Sonnet 5.5 寫摘要：按主題分組，每篇一到兩句，標出值得深讀的 3 篇。
+3. 取 ≥ 3 分的貼文，輪流從各 subreddit 依熱門排名選最多 10 篇，抓它們的留言，Sonnet 5.5 寫每篇的重點和留言摘要，按主題分組。
 4. 套 Markdown 模板，上傳 CodiMD，存 `output/reddit/YYYY-MM-DD.md`。
 
 **Prompt 重點**
 
 - 評分標準寫清楚：新功能、實測心得、踩雷、workflow 技巧給高分；抱怨文、求助文、重複議題給低分。
-- 要求 Sonnet 保留原文連結，不要改寫標題，摘要用繁體中文。
+- 標題、連結和指標由程式輸出，Sonnet 只寫摘要，用繁體中文。
 - 給它過去 3 天的摘要當 context（約 3K token），避免重複報同一件事。
 
 **成本估算**

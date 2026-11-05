@@ -45,7 +45,8 @@ function makeDeps(
         const posts = JSON.parse(callOptions.user) as { id: string }[];
         return scorer(posts, ++scoringAttempts);
       }
-      return '## 摘要\n\n- 重點';
+      const ids = [...callOptions.user.matchAll(/"id":"(t3_\w+)"/g)].map((match) => match[1]);
+      return { items: ids.map((id) => ({ id, highlight: '重點', commentSummary: '留言' })) };
     }) as never,
     publish: (async (alias: string, markdown: string) => {
       if (options.publishFails) throw new Error('CodiMD down');
@@ -132,7 +133,7 @@ test('run writes the note, publishes it under a per-day alias and marks the post
 
   const note = readFileSync(join(outputDir, 'reddit', `${date}.md`), 'utf8');
   assert.ok(note.startsWith('# [Reddit 摘要] 2026-11-04\n'));
-  assert.match(note, /## 摘要/);
+  assert.match(note, /## Claude Code/);
   assert.match(note, /本次花費 \$/);
   assert.deepEqual(published, [{ alias: 'radar-reddit-2026-11-04', markdown: note }]);
   assert.deepEqual(Object.keys(load('reddit_seen', {})).sort(), [
@@ -162,11 +163,11 @@ test('run leaves the posts unseen when the upload fails, so the next run picks t
 test('run reuses the saved raw posts of that date instead of fetching again', async () => {
   const deps = makeDeps();
   await run({ date, upload: true, config }, deps);
-  assert.equal(fetchCount, 1);
+  const fetchesAfterFirstRun = fetchCount;
 
   await run({ date, upload: true, config }, deps);
 
-  assert.equal(fetchCount, 1);
+  assert.equal(fetchCount, fetchesAfterFirstRun);
   assert.equal(published.length, 2);
 });
 

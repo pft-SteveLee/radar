@@ -13,7 +13,7 @@ docker compose up -d --build
 - 狀態頁：`http://<host>:8080`
 - PR 趨勢：`http://<host>:8080/prs`
 - 筆記索引：CodiMD 的 `<CODIMD_URL>/radar-index`，每個 job 列最近 30 篇，每次發佈後自動更新。
-- 排程在 `crontab`（`pr_stats` 每天 06:30、`reddit_digest` 每天 07:30、`changelog_watch` 每週五 09:00，台北時間）。
+- 排程在 `crontab`（`pr_stats` 每天 06:30、`reddit_digest` 每天 07:15、`changelog_watch` 每週五 09:00，台北時間）。
 - 改 `.env` 後要執行 `docker compose up -d jobs`；`restart` 不會重新讀取 `.env`。
 
 ## 手動執行
