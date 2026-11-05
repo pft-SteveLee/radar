@@ -30,7 +30,8 @@ interface CollectDeps {
 const FEED_SPACING_MS = 2000;
 const FEED_TIMEOUT_MS = 20_000;
 const MAX_ATTEMPTS = 3;
-const MAX_POST_AGE_MS = 48 * 60 * 60 * 1000;
+const MAX_POST_AGE_MS = 96 * 60 * 60 * 1000;
+const RANK_LIMIT = 10;
 const TEXT_LIMIT = 500;
 
 const xmlParser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
@@ -110,7 +111,10 @@ export async function collect(
   }
   const oldestAllowed = deps.now().getTime() - MAX_POST_AGE_MS;
   const posts = [...postsById.values()].filter(
-    (post) => !(post.id in seen) && new Date(post.published).getTime() >= oldestAllowed,
+    (post) =>
+      !(post.id in seen) &&
+      new Date(post.published).getTime() >= oldestAllowed &&
+      (post.rank ?? 0) <= RANK_LIMIT,
   );
   return { posts, warnings };
 }
@@ -165,7 +169,9 @@ const SCORE_ATTEMPTS = 2;
 const SUMMARY_MIN_SCORE = 3;
 const SEEN_RETENTION_DAYS = 30;
 const PREVIOUS_NOTE_DAYS = 3;
-const MAX_NOTE_POSTS = 10;
+const CANDIDATE_POSTS = 10;
+const MAX_NOTE_POSTS = 7;
+const MIN_COMMENT_COUNT = 5;
 const COMMENT_FEED_LIMIT = 500;
 const MAX_COMMENTS_FOR_SUMMARY = 50;
 const MIN_COMMENTS_FOR_SUMMARY = 3;
@@ -381,7 +387,7 @@ function renderPost(post: Post, comments: PostComments | undefined, summary: Pos
     comments === undefined
       ? '留言數未知'
       : `💬 ${comments.count >= COMMENT_FEED_LIMIT ? `${COMMENT_FEED_LIMIT}+` : comments.count}`;
-  const metrics = [post.subreddit, commentCount, ...(post.rank ? [`今日熱門 #${post.rank}`] : [])];
+  const metrics = [post.subreddit, commentCount, ...(post.rank ? [`本週熱門 #${post.rank}`] : [])];
   const commentLine =
     comments === undefined
       ? '留言抓取失敗'
@@ -454,17 +460,28 @@ export async function run({ date, upload, config }: RunOptions, deps: Deps): Pro
     const score = scores.get(post.id);
     return score && score.score >= SUMMARY_MIN_SCORE ? [{ ...post, ...score }] : [];
   });
-  const selected = selectPosts(qualified, MAX_NOTE_POSTS);
+  const candidates = selectPosts(qualified, CANDIDATE_POSTS);
+  let selected: typeof candidates = [];
   let body = NOTHING_WORTH_READING;
-  if (selected.length) {
+  if (candidates.length) {
     const { commentsById, warnings: commentWarnings } = await fetchComments(
-      selected,
+      candidates,
       date,
       config.userAgent,
       deps,
     );
     warnings.push(...commentWarnings);
-    body = renderBody(selected, commentsById, await summarize(selected, commentsById, date, deps));
+    selected = candidates
+      .filter(
+        (post) => post.topic === 'orca' || (commentsById[post.id]?.count ?? 0) >= MIN_COMMENT_COUNT,
+      )
+      .slice(0, MAX_NOTE_POSTS);
+    if (selected.length)
+      body = renderBody(
+        selected,
+        commentsById,
+        await summarize(selected, commentsById, date, deps),
+      );
   }
 
   const text = note({
@@ -482,7 +499,7 @@ export async function run({ date, upload, config }: RunOptions, deps: Deps): Pro
   if (status === 'editedOnWeb')
     console.warn(`${url} was edited on the web, so it was not overwritten`);
 
-  const marked = { ...seen, ...Object.fromEntries(raw.posts.map((post) => [post.id, date])) };
+  const marked = { ...seen, ...Object.fromEntries(selected.map((post) => [post.id, date])) };
   save('reddit_seen', pruneSeen(marked, date, SEEN_RETENTION_DAYS));
   save('last_run', { ...load('last_run', {}), reddit_digest: date });
   return { url, warnings };

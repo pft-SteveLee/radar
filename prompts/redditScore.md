@@ -17,3 +17,5 @@
 - other：以上都不是。
 
 每篇貼文都要有一筆結果，id 原樣照抄，不要漏掉也不要新增。
+
+r/programming、r/webdev、r/devops、r/GithubActions 的貼文只收跟 AI 寫程式、agent、Claude 有關的（例如在 CI/CD 或開發流程裡用 AI）。這四個版的貼文如果跟 AI 無關，一律給 0 分。

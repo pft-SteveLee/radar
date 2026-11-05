@@ -80,9 +80,9 @@ test('collect skips posts that were already seen', async () => {
   );
 });
 
-test('collect keeps posts up to 48 hours old and drops older ones', async () => {
-  const recent = harness(() => new Response(feedXml), '2026-11-06T00:00:00Z');
-  const stale = harness(() => new Response(feedXml), '2026-11-06T01:00:00Z');
+test('collect keeps posts up to 96 hours old and drops older ones', async () => {
+  const recent = harness(() => new Response(feedXml), '2026-11-08T00:00:00Z');
+  const stale = harness(() => new Response(feedXml), '2026-11-08T01:00:00Z');
 
   assert.equal((await collect(feeds, userAgent, {}, recent.deps)).posts.length, 3);
   assert.equal((await collect(feeds, userAgent, {}, stale.deps)).posts.length, 0);
