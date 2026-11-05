@@ -1,14 +1,39 @@
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { type call, MODELS } from '../lib/claude.ts';
+import { parseArgs } from 'node:util';
+import { parse as parseYaml } from 'yaml';
+import { call, MODELS, runCost } from '../lib/claude.ts';
+import { publish } from '../lib/codimd.ts';
+import { withIndex } from '../lib/noteIndex.ts';
+import { note } from '../lib/render.ts';
+import { type RunResult, recordRun } from '../lib/runLog.ts';
+import { load, save } from '../lib/state.ts';
 import { withContext } from './changelogWatch.ts';
-import { type MergedPr, type OpenIssue, type OpenPr, shortRepo } from './devWeeklyRules.ts';
+import { collectRepo, fetchDiff, type GithubDeps } from './devWeeklyGithub.ts';
+import {
+  isUndescribedLarge,
+  type MergedPr,
+  OPUS_MAX_PRS,
+  type OpenIssue,
+  type OpenPr,
+  referencedIssues,
+  selectForOpus,
+  shortRepo,
+  staleDrafts,
+  staleIssues,
+  stuckPrs,
+  trimDiff,
+} from './devWeeklyRules.ts';
+import { isoWeek, weekStart } from './prStats.ts';
 
 const JOB = 'dev_weekly';
 const GROUP_ATTEMPTS = 2;
 const BODY_CHARS = 600;
 const OTHER_FEATURE = '其他';
 const LINKS_PER_FEATURE = 5;
+const DAY_MS = 86_400_000;
+const OLD_WEEK_DAYS = 7;
+const DIFF_BODY_CHARS = 2000;
 
 export interface Feature {
   name: string;
@@ -19,6 +44,26 @@ export interface Feature {
 
 export interface GroupDeps {
   call: typeof call;
+}
+
+export interface Deps extends GithubDeps {
+  now: () => Date;
+  call: typeof call;
+  publish: typeof publish;
+}
+
+export interface RawWeek {
+  week: string;
+  fetchedAt: string;
+  merged: MergedPr[];
+  openPrs: OpenPr[];
+  openIssues: OpenIssue[];
+}
+
+export interface Options {
+  week: string;
+  upload: boolean;
+  config: { repos: string[]; token: string };
 }
 
 const GROUP_SCHEMA = {
@@ -182,4 +227,169 @@ export function renderReport(input: ReportInput): string {
     `## 已涵蓋的 repo\n\n${input.repos.map(shortRepo).join('、')}`,
     `以上「進行中」與 issue 為 ${snapshot} 的狀態`,
   ].join('\n\n');
+}
+
+const rawName = (week: string) => `devWeekly/raw/${week}`;
+const opusName = (week: string) => `devWeekly/opus/${week}`;
+const outputPath = (week: string) =>
+  join(process.env.OUTPUT_DIR ?? 'output', 'devWeekly', `${week}.md`);
+const prLabel = (pr: { repo: string; number: number }) => `${shortRepo(pr.repo)}#${pr.number}`;
+const errorMessage = (error: unknown) => (error as Error).message;
+
+export function previousWeek(today: string): string {
+  const day = new Date(new Date(`${today}T00:00:00Z`).getTime() - 7 * DAY_MS);
+  return isoWeek(day.toISOString().slice(0, 10));
+}
+
+function readContext(): string | null {
+  try {
+    return readFileSync(join(process.env.CONFIG_DIR ?? 'config', 'devWeeklyContext.md'), 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+async function collectAll(options: Options, deps: Deps, warnings: string[]): Promise<RawWeek> {
+  const raw: RawWeek = {
+    week: options.week,
+    fetchedAt: deps.now().toISOString(),
+    merged: [],
+    openPrs: [],
+    openIssues: [],
+  };
+  const errors: string[] = [];
+  for (const repo of options.config.repos) {
+    try {
+      const data = await collectRepo(repo, options.week, options.config.token, deps);
+      raw.merged.push(...data.merged);
+      raw.openPrs.push(...data.openPrs);
+      raw.openIssues.push(...data.openIssues);
+      warnings.push(...data.warnings);
+    } catch (error) {
+      errors.push(errorMessage(error));
+    }
+  }
+  if (errors.length === options.config.repos.length) throw new Error(errors[0]);
+  warnings.push(...errors);
+  return raw;
+}
+
+async function describeLargePrs(
+  raw: RawWeek,
+  options: Options,
+  deps: Deps,
+  warnings: string[],
+): Promise<Record<string, string>> {
+  const { selected, skipped } = selectForOpus(raw.merged);
+  if (skipped.length)
+    warnings.push(
+      `每週最多讓 Opus 讀 ${OPUS_MAX_PRS} 個 diff，這些 PR 沒有處理：${skipped.map(prLabel).join('、')}`,
+    );
+  const sentences = load<Record<string, string>>(opusName(options.week), {});
+  for (const pr of selected) {
+    const key = `${pr.repo}#${pr.number}`;
+    if (sentences[key]) continue;
+    try {
+      const { text, truncated } = trimDiff(await fetchDiff(pr, options.config.token, deps));
+      if (truncated) warnings.push(`${prLabel(pr)}: diff 已截斷`);
+      const answer = await deps.call({
+        job: JOB,
+        model: MODELS.opus,
+        system: readPrompt('devWeeklyDiff.md'),
+        user: JSON.stringify({
+          title: pr.title,
+          body: pr.body.slice(0, DIFF_BODY_CHARS),
+          diff: text,
+        }),
+      });
+      sentences[key] = (answer as string).trim();
+      save(opusName(options.week), sentences);
+    } catch (error) {
+      warnings.push(`${prLabel(pr)}: Opus 說明失敗：${errorMessage(error)}`);
+    }
+  }
+  return sentences;
+}
+
+export async function run(options: Options, deps: Deps): Promise<RunResult> {
+  const startedAt = new Date().toISOString();
+  const warnings: string[] = [];
+  let raw = load<RawWeek | null>(rawName(options.week), null);
+  if (!raw) {
+    raw = await collectAll(options, deps, warnings);
+    save(rawName(options.week), raw);
+    const weekEnd = new Date(`${weekStart(options.week)}T00:00:00Z`).getTime() + 7 * DAY_MS;
+    if (deps.now().getTime() - weekEnd > OLD_WEEK_DAYS * DAY_MS)
+      warnings.push(
+        '這一週已經結束超過 7 天，「進行中」與 issue 顯示的是目前的狀態，不是那一週當時的',
+      );
+  }
+  const context = readContext();
+  if (context === null) warnings.push('找不到 config/devWeeklyContext.md，功能命名會比較籠統');
+
+  const sentences = await describeLargePrs(raw, options, deps, warnings);
+  const features = raw.merged.length ? await groupPrs(raw.merged, sentences, context, deps) : [];
+  const snapshot = new Date(raw.fetchedAt);
+  const text = note({
+    title: `[開發週報] ${options.week}`,
+    body: renderReport({
+      mergedCount: raw.merged.length,
+      features,
+      stuck: stuckPrs(raw.openPrs, snapshot),
+      staleDrafts: staleDrafts(raw.openPrs, snapshot),
+      undescribed: raw.merged.filter(isUndescribedLarge),
+      staleIssues: staleIssues(
+        raw.openIssues,
+        referencedIssues([...raw.merged, ...raw.openPrs]),
+        snapshot,
+      ),
+      repos: options.config.repos,
+      fetchedAt: raw.fetchedAt,
+    }),
+    warnings,
+    costUsd: runCost(JOB, startedAt),
+  });
+  mkdirSync(join(outputPath(options.week), '..'), { recursive: true });
+  writeFileSync(outputPath(options.week), text);
+  if (!options.upload) return { url: null, warnings };
+
+  const { url, status } = await deps.publish(`radar-dev-weekly-${options.week}`, text);
+  console.log(`${url} (${status})`);
+  if (status === 'editedOnWeb')
+    console.warn(`${url} was edited on the web, so it was not overwritten`);
+  return { url, warnings };
+}
+
+if (import.meta.main) {
+  const { values } = parseArgs({
+    options: { week: { type: 'string' }, 'no-upload': { type: 'boolean' } },
+  });
+  const today = new Date().toLocaleDateString('sv', { timeZone: 'Asia/Taipei' });
+  const week = values.week ?? previousWeek(today);
+  if (!/^\d{4}-W\d{2}$/.test(week)) throw new Error(`--week must look like 2026-W45, got ${week}`);
+  await recordRun(
+    JOB,
+    withIndex(
+      JOB,
+      () => {
+        const token = process.env.GITHUB_TOKEN;
+        if (!token) throw new Error('GITHUB_TOKEN is not set');
+        const configFile = parseYaml(
+          readFileSync(join(process.env.CONFIG_DIR ?? 'config', 'repos.yaml'), 'utf8'),
+        ) as { repos: string[] };
+        return run(
+          { week, upload: !values['no-upload'], config: { repos: configFile.repos, token } },
+          {
+            fetch,
+            sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+            now: () => new Date(),
+            call,
+            publish,
+          },
+        );
+      },
+      publish,
+    ),
+  );
 }
