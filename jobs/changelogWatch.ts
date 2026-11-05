@@ -160,7 +160,7 @@ function readContext(): string | null {
   }
 }
 
-const withContext = (prompt: string, context: string | null) =>
+export const withContext = (prompt: string, context: string | null) =>
   context ? `${prompt}\n\n## 團隊背景\n\n${context}` : prompt;
 
 const isUrgent = (change: Change) => change.category === '棄用' || change.category === '價格';
