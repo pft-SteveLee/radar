@@ -19,7 +19,7 @@ export interface Range {
 const DAY_MS = 86_400_000;
 const WEEK_CHOICES = [12, 26, 52];
 const DEFAULT_WEEKS = 26;
-const MAX_RANGE_DAYS = 3 * 366;
+const MAX_RANGE_DAYS = 2 * 366;
 const SERIES_COUNT = 8;
 const SHAPES = ['circle', 'square', 'diamond', 'triangle'] as const;
 const seriesColor = (index: number) => `var(--s${(index % SERIES_COUNT) + 1})`;
@@ -28,7 +28,7 @@ function marker(
   index: number,
   cx: number,
   cy: number,
-  options: { hollow: boolean; pending: string | null; title: string },
+  options: { hollow: boolean; pending: string | null; title: string; truncated?: boolean },
 ): string {
   const shape = SHAPES[(index + Math.floor(index / SERIES_COUNT)) % SHAPES.length];
   const color = seriesColor(index);
@@ -36,7 +36,8 @@ function marker(
     ? `fill:var(--bg);stroke:${color};stroke-width:2`
     : `fill:${color};stroke:none`;
   const pending = options.pending === null ? '' : ` data-pending="${options.pending}"`;
-  const attributes = `data-shape="${shape}"${pending} style="${style}"`;
+  const truncated = options.truncated ? ' data-truncated="true"' : '';
+  const attributes = `data-shape="${shape}"${pending}${truncated} style="${style}"`;
   const [x, y] = [cx.toFixed(1), cy.toFixed(1)];
   const title = `<title>${options.title}</title>`;
   if (shape === 'circle')
@@ -61,10 +62,12 @@ function marker(
 
 const SERIES_CSS = `:root { --s1: #2563eb; --s2: #dc2626; --s3: #16a34a; --s4: #d97706; --s5: #7c3aed; --s6: #0891b2; --s7: #db2777; --s8: #4d7c0f; }
 @media (prefers-color-scheme: dark) { :root { --s1: #60a5fa; --s2: #f87171; --s3: #4ade80; --s4: #fbbf24; --s5: #a78bfa; --s6: #22d3ee; --s7: #f472b6; --s8: #a3e635; } }`;
-const CHART = { width: 800, height: 260, left: 48, right: 8, top: 8, bottom: 24 };
+const CHART = { width: 800, height: 272, left: 48, right: 8, top: 14, bottom: 34 };
+const X_LABEL_COUNT = 5;
+const MAX_GRID_LINES = 4;
 const GAP_LABEL_MIN_WIDTH = 80;
 const AXIS_LABEL_PADDING = 14;
-const AXIS_DIGIT_WIDTH = 13;
+const AXIS_DIGIT_WIDTH = 18;
 const TRUNCATED_NOTE = '（已截斷，數字偏低）';
 
 const isDay = (value: string | null): value is string =>
@@ -84,7 +87,7 @@ export function parseRange(query: URLSearchParams, today: string): Range {
     else {
       const to = requestedTo > today ? today : requestedTo;
       if (from > to) reason = '起日晚於迄日';
-      else if (Date.parse(to) - Date.parse(from) > MAX_RANGE_DAYS * DAY_MS) reason = '最長 3 年';
+      else if (Date.parse(to) - Date.parse(from) > MAX_RANGE_DAYS * DAY_MS) reason = '最長 2 年';
       else return { from, to, weeks: null, reason: null };
     }
   }
@@ -148,6 +151,23 @@ function unfetchedRuns(weeks: WeekCounts[]): [number, number, boolean][] {
   return runs;
 }
 
+function niceTicks(highest: number): number[] {
+  for (let magnitude = 1; ; magnitude *= 10)
+    for (const factor of [1, 2, 5]) {
+      const step = factor * magnitude;
+      const count = Math.ceil(highest / step);
+      if (count <= MAX_GRID_LINES) return Array.from({ length: count }, (_, i) => (i + 1) * step);
+    }
+}
+
+function weekLabelIndexes(weekCount: number): number[] {
+  const last = weekCount - 1;
+  const indexes = Array.from({ length: X_LABEL_COUNT }, (_, i) =>
+    Math.round((i * last) / (X_LABEL_COUNT - 1)),
+  );
+  return [...new Set(indexes)];
+}
+
 function chart(
   weeks: WeekCounts[],
   series: Series[],
@@ -155,15 +175,15 @@ function chart(
   currentWeek: string | null,
 ): string {
   const highest = Math.max(1, ...series.flatMap((line) => line.values.map((value) => value ?? 0)));
-  const axisLeft = Math.max(
-    CHART.left,
-    AXIS_LABEL_PADDING + AXIS_DIGIT_WIDTH * String(highest).length,
-  );
+  const ticks = niceTicks(highest);
+  const top = ticks.at(-1) ?? highest;
+  const axisLeft = Math.max(CHART.left, AXIS_LABEL_PADDING + AXIS_DIGIT_WIDTH * String(top).length);
   const plotWidth = CHART.width - axisLeft - CHART.right;
   const plotHeight = CHART.height - CHART.top - CHART.bottom;
   const step = plotWidth / Math.max(weeks.length - 1, 1);
-  const x = (index: number) => axisLeft + index * step;
-  const y = (count: number) => CHART.top + (1 - count / highest) * plotHeight;
+  const x = (index: number) =>
+    weeks.length === 1 ? axisLeft + plotWidth / 2 : axisLeft + index * step;
+  const y = (count: number) => CHART.top + (1 - count / top) * plotHeight;
   const pendingIndex = weeks.findIndex((week) => week.week === currentWeek);
   const bands = unfetchedRuns(weeks).map(([first, last, corrupt]) => {
     const left = Math.max(axisLeft, x(first) - step / 2);
@@ -184,6 +204,18 @@ function chart(
     for (const [index, value] of line.values.entries()) {
       if (value === null || index === pendingIndex) {
         penDown = false;
+        continue;
+      }
+      if (weeks[index].truncated) {
+        penDown = false;
+        dots.push(
+          marker(lineIndex, x(index), y(value), {
+            hollow: true,
+            pending: null,
+            truncated: true,
+            title: `${name} ${weeks[index].week}${TRUNCATED_NOTE}: ${value}`,
+          }),
+        );
         continue;
       }
       path += `${penDown ? 'L' : 'M'}${x(index).toFixed(1)} ${y(value).toFixed(1)} `;
@@ -212,13 +244,30 @@ function chart(
   });
   const firstWeek = weeks[0]?.week ?? '';
   const lastWeek = weeks.at(-1)?.week ?? '';
-  return `<svg class="chart" viewBox="0 0 ${CHART.width} ${CHART.height}" role="img" aria-label="${label}，${firstWeek} 到 ${lastWeek}">
+  const baseline = CHART.top + plotHeight;
+  const grid = ticks.map(
+    (tick) =>
+      `<line x1="${axisLeft}" y1="${y(tick).toFixed(1)}" x2="${CHART.width - CHART.right}" y2="${y(tick).toFixed(1)}" class="grid"/>\n<text x="${axisLeft - 6}" y="${y(tick).toFixed(1)}" dy="0.35em" text-anchor="end">${tick}</text>`,
+  );
+  const weekLabels = weekLabelIndexes(weeks.length).map((index) => {
+    const anchor =
+      weeks.length === 1 || (index > 0 && index < weeks.length - 1)
+        ? 'middle'
+        : index === 0
+          ? 'start'
+          : 'end';
+    return `<text x="${x(index).toFixed(1)}" y="${CHART.height - 8}" text-anchor="${anchor}">${weeks[index].week}</text>`;
+  });
+  const hasOpenPoint = weeks.some(
+    (week) => week.counts !== null && (week.truncated || week.week === currentWeek),
+  );
+  const note = `數值見下方表格${hasOpenPoint ? '；空心點＝進行中或已截斷（數字未定或偏低）' : ''}`;
+  return `<svg class="chart" viewBox="0 0 ${CHART.width} ${CHART.height}" role="img" aria-label="${label}，${firstWeek} 到 ${lastWeek}（數據見下方表格）">
 ${bands.join('\n')}
-<line x1="${axisLeft}" y1="${CHART.top + plotHeight}" x2="${CHART.width - CHART.right}" y2="${CHART.top + plotHeight}" class="axis"/>
-<text x="${axisLeft - 6}" y="${CHART.top + 10}" text-anchor="end">${highest}</text>
-<text x="${axisLeft - 6}" y="${CHART.top + plotHeight}" text-anchor="end">0</text>
-<text x="${axisLeft}" y="${CHART.height - 6}">${firstWeek}</text>
-<text x="${CHART.width - CHART.right}" y="${CHART.height - 6}" text-anchor="end">${lastWeek}</text>
+${grid.join('\n')}
+<line x1="${axisLeft}" y1="${baseline}" x2="${CHART.width - CHART.right}" y2="${baseline}" class="axis"/>
+<text x="${axisLeft - 6}" y="${baseline}" dy="0.35em" text-anchor="end">0</text>
+${weekLabels.join('\n')}
 ${lines.join('\n')}
 </svg>
 <ul class="legend">
@@ -228,7 +277,8 @@ ${series
       `<li><svg class="swatch" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">${marker(index, 7, 7, { hollow: false, pending: null, title: escapeHtml(line.name) })}</svg>${escapeHtml(line.name)}</li>`,
   )
   .join('\n')}
-</ul>`;
+</ul>
+<p class="chart-note">${note}</p>`;
 }
 
 function teamChart(weeks: WeekCounts[], members: string[], currentWeek: string): string {
@@ -314,14 +364,16 @@ export function renderPrPage({
 ${BASE_CSS}
 ${SERIES_CSS}
 svg.chart { width: 100%; height: auto; font-size: 11px; fill: var(--muted); }
-@media (max-width: 40rem) { svg.chart text { font-size: 20px; } }
+@media (max-width: 40rem) { svg.chart text { font-size: 28px; } }
 svg.chart .axis { stroke: var(--muted); }
+svg.chart .grid { stroke: var(--line); }
 svg.chart .gap { fill: var(--line); opacity: 0.5; }
 svg.chart .gap-label { fill: var(--text); }
 form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0 1rem; }
 .legend { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; }
 .legend li { display: flex; align-items: center; gap: 0.3rem; }
 .notice { font-weight: 600; }
+.chart-note { color: var(--muted); margin: 0 0 1rem; }
 </style>
 </head>
 <body>
