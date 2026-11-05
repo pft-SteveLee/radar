@@ -18,6 +18,7 @@ export interface Post {
   url: string;
   text: string;
   published: string;
+  rank?: number;
 }
 
 interface CollectDeps {
@@ -98,8 +99,11 @@ export async function collect(
   for (const [index, url] of feeds.entries()) {
     if (index > 0) await deps.sleep(FEED_SPACING_MS);
     try {
-      for (const post of parseFeed(await fetchFeed(url, userAgent, deps)))
-        postsById.set(post.id, post);
+      const isTopFeed = url.includes('/top.rss');
+      for (const [position, post] of parseFeed(await fetchFeed(url, userAgent, deps)).entries()) {
+        const rank = isTopFeed ? position + 1 : postsById.get(post.id)?.rank;
+        postsById.set(post.id, rank ? { ...post, rank } : post);
+      }
     } catch (error) {
       warnings.push(`${url}: ${(error as Error).message}`);
     }
@@ -161,6 +165,41 @@ const SCORE_ATTEMPTS = 2;
 const SUMMARY_MIN_SCORE = 3;
 const SEEN_RETENTION_DAYS = 30;
 const PREVIOUS_NOTE_DAYS = 3;
+const MAX_NOTE_POSTS = 10;
+const COMMENT_FEED_LIMIT = 500;
+const MAX_COMMENTS_FOR_SUMMARY = 50;
+const MIN_COMMENTS_FOR_SUMMARY = 3;
+
+const TOPIC_HEADINGS: Record<Topic, string> = {
+  'claude-code': 'Claude Code',
+  'ai-coding': 'AI coding',
+  seo: 'SEO',
+  orca: 'Orca ADE',
+  other: '其他',
+};
+
+const SUMMARY_SCHEMA = {
+  type: 'object',
+  properties: {
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          highlight: { type: 'string' },
+          commentSummary: { type: 'string' },
+        },
+        required: ['id', 'highlight', 'commentSummary'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['items'],
+  additionalProperties: false,
+};
+
+const NOTHING_WORTH_READING = '今日無值得一看的貼文';
 
 const readPrompt = (name: string) =>
   readFileSync(join(process.env.PROMPTS_DIR ?? 'prompts', name), 'utf8');
@@ -234,23 +273,146 @@ function previousNotes(date: string): string {
     .join('\n\n---\n\n');
 }
 
-async function summarize(selected: (Post & Score)[], date: string, deps: Deps): Promise<string> {
-  const posts = selected.map(({ id, title, subreddit, url, topic, score, text }) => ({
+export function selectPosts<T extends Post & Score>(posts: T[], limit: number): T[] {
+  const groups = new Map<string, T[]>();
+  for (const post of posts) {
+    const key = post.topic === 'orca' ? 'orca' : post.subreddit;
+    groups.set(key, [...(groups.get(key) ?? []), post]);
+  }
+  const queues = [...groups.values()].map((group) =>
+    group.toSorted((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity)),
+  );
+  const selected: T[] = [];
+  for (let round = 0; selected.length < limit && queues.some((queue) => queue[round]); round++)
+    for (const queue of queues)
+      if (queue[round] && selected.length < limit) selected.push(queue[round]);
+  return selected;
+}
+
+interface PostComments {
+  count: number;
+  comments: string[];
+}
+
+function parseComments(xml: string): PostComments {
+  const entries = parseFeed(xml).filter((entry) => entry.id.startsWith('t1_'));
+  const comments = entries
+    .filter(
+      ({ author, text }) =>
+        author !== '/u/AutoModerator' && text !== '[removed]' && text !== '[deleted]',
+    )
+    .map(({ text }) => text);
+  return {
+    count: entries.length >= COMMENT_FEED_LIMIT ? COMMENT_FEED_LIMIT : comments.length,
+    comments: comments.slice(0, MAX_COMMENTS_FOR_SUMMARY),
+  };
+}
+
+async function fetchComments(
+  posts: Post[],
+  date: string,
+  userAgent: string,
+  deps: Deps,
+): Promise<{ commentsById: Record<string, PostComments>; warnings: string[] }> {
+  const stateName = `reddit/comments/${date}`;
+  const commentsById = load<Record<string, PostComments>>(stateName, {});
+  const warnings: string[] = [];
+  for (const post of posts.filter(({ id }) => !(id in commentsById))) {
+    await deps.sleep(FEED_SPACING_MS);
+    try {
+      const url = `${post.url}.rss?limit=${COMMENT_FEED_LIMIT}&sort=top`;
+      commentsById[post.id] = parseComments(await fetchFeed(url, userAgent, deps));
+    } catch (error) {
+      warnings.push(`${post.url} 留言抓取失敗：${(error as Error).message}`);
+    }
+  }
+  save(stateName, commentsById);
+  return { commentsById, warnings };
+}
+
+const hasEnoughComments = (comments: PostComments | undefined): comments is PostComments =>
+  comments !== undefined && comments.comments.length >= MIN_COMMENTS_FOR_SUMMARY;
+
+interface PostSummary {
+  id: string;
+  highlight: string;
+  commentSummary: string;
+}
+
+function parseSummaries(answer: unknown): PostSummary[] {
+  const items = (answer as { items?: unknown } | null)?.items;
+  if (!Array.isArray(items)) throw new SyntaxError('summary answer has no items array');
+  return items;
+}
+
+async function summarize(
+  selected: (Post & Score)[],
+  commentsById: Record<string, PostComments>,
+  date: string,
+  deps: Deps,
+): Promise<PostSummary[]> {
+  const posts = selected.map(({ id, title, subreddit, topic, text }) => ({
     id,
     title,
     subreddit,
-    url,
     topic,
-    score,
     text,
+    comments: hasEnoughComments(commentsById[id]) ? commentsById[id].comments : [],
   }));
   const user = `## 今天的貼文\n\n${JSON.stringify(posts)}\n\n## 前三天的摘要\n\n${previousNotes(date) || '（沒有）'}`;
-  return (await deps.call({
-    job: JOB,
-    model: MODELS.sonnet,
-    system: readPrompt('redditDigest.md'),
-    user,
-  })) as string;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const answer = await deps.call({
+        job: JOB,
+        model: MODELS.sonnet,
+        system: readPrompt('redditDigest.md'),
+        user,
+        schema: SUMMARY_SCHEMA,
+      });
+      return parseSummaries(answer);
+    } catch (error) {
+      if (!(error instanceof SyntaxError) || attempt >= SCORE_ATTEMPTS) throw error;
+    }
+  }
+}
+
+function renderPost(post: Post, comments: PostComments | undefined, summary: PostSummary): string {
+  const commentCount =
+    comments === undefined
+      ? '留言數未知'
+      : `💬 ${comments.count >= COMMENT_FEED_LIMIT ? `${COMMENT_FEED_LIMIT}+` : comments.count}`;
+  const metrics = [post.subreddit, commentCount, ...(post.rank ? [`今日熱門 #${post.rank}`] : [])];
+  const commentLine =
+    comments === undefined
+      ? '留言抓取失敗'
+      : hasEnoughComments(comments)
+        ? summary.commentSummary
+        : '留言太少，暫無摘要';
+  const title = post.title.replace(/[[\]]/g, '\\$&');
+  return [
+    `### [${title}](${post.url})`,
+    metrics.join(' · '),
+    `**重點**：${summary.highlight}`,
+    `**留言**：${commentLine}`,
+  ].join('\n\n');
+}
+
+function renderBody(
+  selected: (Post & Score)[],
+  commentsById: Record<string, PostComments>,
+  summaries: PostSummary[],
+): string {
+  const summaryById = new Map(summaries.map((summary) => [summary.id, summary]));
+  const kept = selected.filter(({ id }) => summaryById.has(id));
+  if (!kept.length) return NOTHING_WORTH_READING;
+  return TOPICS.flatMap((topic) => {
+    const posts = kept.filter((post) => post.topic === topic);
+    if (!posts.length) return [];
+    const rendered = posts.map((post) =>
+      renderPost(post, commentsById[post.id], summaryById.get(post.id) as PostSummary),
+    );
+    return [`## ${TOPIC_HEADINGS[topic]}`, ...rendered];
+  }).join('\n\n');
 }
 
 export interface Config {
@@ -288,11 +450,22 @@ export async function run({ date, upload, config }: RunOptions, deps: Deps): Pro
 
   const { scores, warnings: scoreWarnings } = await scorePosts(raw.posts, deps);
   warnings.push(...scoreWarnings);
-  const selected = raw.posts.flatMap((post) => {
+  const qualified = raw.posts.flatMap((post) => {
     const score = scores.get(post.id);
     return score && score.score >= SUMMARY_MIN_SCORE ? [{ ...post, ...score }] : [];
   });
-  const body = selected.length ? await summarize(selected, date, deps) : '今日無值得一看的貼文';
+  const selected = selectPosts(qualified, MAX_NOTE_POSTS);
+  let body = NOTHING_WORTH_READING;
+  if (selected.length) {
+    const { commentsById, warnings: commentWarnings } = await fetchComments(
+      selected,
+      date,
+      config.userAgent,
+      deps,
+    );
+    warnings.push(...commentWarnings);
+    body = renderBody(selected, commentsById, await summarize(selected, commentsById, date, deps));
+  }
 
   const text = note({
     title: `[Reddit 摘要] ${date}`,
