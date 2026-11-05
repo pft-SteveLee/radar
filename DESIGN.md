@@ -216,14 +216,14 @@ A native `<progress>` bar: full width, 0.75rem high, ink blue via `accent-color`
 
 A hand-drawn inline SVG with `role="img"` and an `aria-label` that names the measure and the week range.
 
-- **Axes:** one baseline in pencil gray (dark enough to read as a graphic), with the maximum and 0 in pencil gray on the left and the first and last week below. On a phone the axis text grows to 20 units so it stays readable, and the left margin grows with the number of digits of the maximum so a four-digit label is never cut.
+- **Axes:** one baseline in pencil gray (dark enough to read as a graphic). Three or four ruled grid lines in ruled-line color mark round values (1, 2 or 5 times a power of ten) with their numbers in pencil gray on the left, and 0 sits on the baseline; the top grid line is the top of the chart. Five evenly spaced week labels run along the bottom (fewer when there are fewer weeks). On a phone the axis text grows to 28 units so it stays readable, and the left margin grows with the number of digits of the top value so a four-digit label is never cut. With a single week the point sits in the middle with one label.
 - **Lines:** 2px strokes in series colors. A line breaks at a week that has no data instead of dropping to zero.
 - **Current week:** the last segment is dashed and its marker is hollow, with "（進行中）" in its `<title>`.
 - **Unfetched weeks:** a stretch of weeks with no data is a pale band labelled 「未抓取」 (the label is dropped when the band is narrow).
-- **Truncated week:** a week the GitHub search cut short (more than 1000 results) is marked 「（已截斷，數字偏低）」 in the table and in the point titles, because its counts are too low.
+- **Truncated week:** a week the GitHub search cut short (more than 1000 results) is marked 「（已截斷，數字偏低）」 in the table and in the point titles, because its counts are too low. Its marker is hollow and the line breaks there, so it never reads as a real dip.
 - **Points:** a marker per value, circle, square, diamond or triangle by series order (moving one step on after every eight series). Each carries a `<title>` with "{name} {week}: {value}".
 - **Legend:** an unstyled list under the chart, each item the series marker followed by the name.
-- **Pairing:** every chart has a table on the same page with the same numbers.
+- **Pairing:** every chart has a table on the same page with the same numbers. The `aria-label` ends with 「（數據見下方表格）」 and a muted line under the legend says 「數值見下方表格」, because the points have no touch or keyboard readout (the pages use no JavaScript). When the range holds a current or truncated week, the same line adds 「空心點＝進行中或已截斷（數字未定或偏低）」.
 
 ### Range Picker
 

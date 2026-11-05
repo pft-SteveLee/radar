@@ -42,7 +42,7 @@ test('parseRange falls back to 26 weeks and names the reason for anything invali
     ['from=<script>&to=2025-01-01', '日期格式錯誤'],
     ['from=2026-02-31&to=2026-03-10', '日期格式錯誤'],
     ['from=2025-06-30&to=2025-01-01', '起日晚於迄日'],
-    ['from=2020-01-01&to=2026-11-04', '最長 3 年'],
+    ['from=2024-01-01&to=2026-11-04', '最長 2 年'],
   ];
   for (const [query, reason] of cases)
     assert.deepEqual(range(query), { ...DEFAULT_RANGE, reason }, query);
@@ -276,7 +276,7 @@ test('renderPrPage draws the axis line darker and gives controls room to tap', (
 test('renderPrPage keeps chart text readable on a phone and hints that the table scrolls', () => {
   const html = page(['alice']);
 
-  assert.match(html, /@media \(max-width: 40rem\) \{ svg\.chart text \{ font-size: 20px; \} \}/);
+  assert.match(html, /@media \(max-width: 40rem\) \{ svg\.chart text \{ font-size: 28px; \} \}/);
   assert.match(html, /（— 表示該週尚未抓取）<span class="hint">（可左右捲動）<\/span>/);
 });
 
@@ -319,4 +319,82 @@ test('renderPrPage matches member names to author names without regard to case',
   });
 
   assert.match(html, /<th scope="row">2026-W45（進行中）<\/th><td>5<\/td><td>5<\/td>/);
+});
+
+const pageOf = (weeks: Parameters<typeof renderPrPage>[0]['weeks']) =>
+  renderPrPage({
+    weeks,
+    members: ['alice'],
+    range: { from: '2026-10-19', to: TODAY, weeks: null, reason: null },
+    today: TODAY,
+    now: NOW,
+    maxAgeHours: 26,
+    updatedAt: '2026-11-03T22:30:00.000Z',
+  });
+
+test('parseRange accepts just under two years and refuses more', () => {
+  assert.equal(range('from=2024-11-05&to=2026-11-04').reason, null);
+  assert.equal(range('from=2024-11-01&to=2026-11-04').reason, '最長 2 年');
+});
+
+test('renderPrPage points to the table from the chart label and a visible line', () => {
+  const html = page(['alice']);
+
+  assert.match(
+    html,
+    /aria-label="團隊每週 merged PR 合計，2026-W43 到 2026-W45（數據見下方表格）"/,
+  );
+  assert.match(html, /<p class="chart-note">數值見下方表格/);
+  assert.match(html, /\.chart-note \{ color: var\(--muted\);/);
+});
+
+test('renderPrPage draws grid lines at round values and ends the axis on the top one', () => {
+  const html = page(['alice', 'bob']);
+  const team = html.slice(0, html.indexOf('</svg>'));
+
+  assert.equal((team.match(/class="grid"/g) ?? []).length, 3);
+  for (const label of ['0', '2', '4', '6'])
+    assert.match(team, new RegExp(`text-anchor="end"[^>]*>${label}</text>`));
+  assert.match(html, /svg\.chart \.grid \{ stroke: var\(--line\); \}/);
+});
+
+test('renderPrPage labels five evenly spaced weeks along the bottom', () => {
+  const weeks = Array.from({ length: 9 }, (_, index) => ({
+    week: `2026-W${String(37 + index).padStart(2, '0')}`,
+    counts: { alice: index },
+  }));
+  const html = pageOf(weeks);
+  const team = html.slice(0, html.indexOf('</svg>'));
+  const labels = [...team.matchAll(/y="2\d\d(?:\.\d)?"[^>]*>(2026-W\d\d)<\/text>/g)].map(
+    (m) => m[1],
+  );
+
+  assert.deepEqual(labels, ['2026-W37', '2026-W39', '2026-W41', '2026-W43', '2026-W45']);
+});
+
+test('renderPrPage draws a lone week in the middle with one label', () => {
+  const html = pageOf([{ week: '2026-W44', counts: { alice: 5 } }]);
+  const team = html.slice(0, html.indexOf('</svg>'));
+
+  assert.match(team, /<circle cx="420\.0"/);
+  assert.equal((team.match(/>2026-W44<\/text>/g) ?? []).length, 1);
+});
+
+test('renderPrPage draws a truncated week as an open point with no line to its neighbours', () => {
+  const html = pageOf([
+    { week: '2026-W42', counts: { alice: 3 } },
+    { week: '2026-W43', counts: { alice: 1000 }, truncated: true },
+    { week: '2026-W44', counts: { alice: 4 } },
+  ]);
+  const path = html.match(/<path[^>]*data-member="alice"[^>]*d="([^"]+)"/)?.[1] ?? '';
+
+  assert.match(html, /data-truncated="true"[^>]*style="fill:var\(--bg\)/);
+  assert.equal((path.match(/M/g) ?? []).length, 2);
+  assert.doesNotMatch(path, /L/);
+  assert.match(html, /空心點＝進行中或已截斷/);
+});
+
+test('renderPrPage explains the open points only when the range has such a week', () => {
+  assert.doesNotMatch(pageOf([{ week: '2026-W43', counts: { alice: 3 } }]), /空心點/);
+  assert.match(page(['alice']), /空心點＝進行中或已截斷/);
 });
