@@ -62,7 +62,7 @@ export function weeksBetween(from: string, to: string): string[] {
   return weeks;
 }
 
-function waitMilliseconds(response: Response, now: Date): number | null {
+export function waitMilliseconds(response: Response, now: Date): number | null {
   const retryAfter = Number(response.headers.get('retry-after'));
   if (retryAfter) return (retryAfter + 1) * 1000;
   const reset = Number(response.headers.get('x-ratelimit-reset'));

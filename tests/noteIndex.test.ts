@@ -34,6 +34,14 @@ test('renderIndex has one section per job with the newest note first', () => {
   );
 });
 
+test('renderIndex titles the dev_weekly section 開發週報', () => {
+  const text = renderIndex([
+    run('dev_weekly', '2026-11-09T01:00:00Z', noteUrl('radar-dev-weekly-2026-W45')),
+  ]);
+  assert.match(text, /## 開發週報/);
+  assert.doesNotMatch(text, /## dev_weekly/);
+});
+
 test('renderIndex lists at most 30 notes per job', () => {
   const runs = Array.from({ length: 35 }, (_, index) =>
     run(
@@ -73,8 +81,8 @@ test('renderIndex dates are in Taipei time', () => {
 });
 
 test('renderIndex uses the job name for a job without a title', () => {
-  const text = renderIndex([run('dev_weekly', '2026-11-04T00:00:00Z', noteUrl('a'))]);
-  assert.match(text, /## dev_weekly/);
+  const text = renderIndex([run('amp_compare', '2026-11-04T00:00:00Z', noteUrl('a'))]);
+  assert.match(text, /## amp_compare/);
 });
 
 function makePublish(result: { status: string } | Error = { status: 'written' }) {
