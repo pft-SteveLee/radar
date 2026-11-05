@@ -136,17 +136,47 @@ if [[ -z "$CMD_PREFIX" ]]; then
   fi
 fi
 
-# --- 探測 JSON envelope 的欄位名 (官方文件只保證 result/session_id/total_cost_usd) ---
+# --- 冒煙測試:一次極短的真實呼叫,確認憑證真的能用 ---
+# 這是硬性關卡。authMethod 只說「打算用哪把 key」,不保證那把 key 有效;
+# 唯一可靠的驗證是真的打一次。這關沒過就絕不進批次 —— 否則會像 2026-11-04
+# 那次一樣,45 次呼叫全部回 Invalid API key,報告全空,而 INDEX.md 還顯示
+# 「0 BLOCKER 0 MAJOR」,看起來像一份乾淨的體檢報告。
 PROBE="$RUNS/_probe.json"
-if [[ $DRY_RUN -eq 0 && ! -f "$PROBE" ]]; then
-  log "探測 JSON 輸出格式 (一次極短呼叫,成本約 \$0.001)…"
+if [[ $DRY_RUN -eq 0 ]]; then
+  rm -f "$PROBE"
+  log "冒煙測試:實際打一次 API 確認憑證可用…"
   claude -p "Reply with exactly: ok" \
     --model haiku --permission-mode dontAsk --tools "" \
-    --max-turns 1 --output-format json </dev/null >"$PROBE" 2>/dev/null
-  if jq -e '.total_cost_usd' "$PROBE" >/dev/null 2>&1; then
-    ok "JSON envelope 可用,欄位: $(jq -r 'keys | join(", ")' "$PROBE")"
+    --max-turns 1 --output-format json </dev/null >"$PROBE" 2>"$RUNS/_probe.err"
+  PROBE_RC=$?
+  PROBE_TXT="$(cat "$PROBE" "$RUNS/_probe.err" 2>/dev/null)"
+
+  if jq -e '.total_cost_usd' "$PROBE" >/dev/null 2>&1 \
+     && [[ "$(jq -r '.subtype // "success"' "$PROBE" 2>/dev/null)" == "success" ]] \
+     && [[ "$(jq -r '.is_error // false' "$PROBE" 2>/dev/null)" != "true" ]]; then
+    ok "憑證可用 (authMethod=$AUTH_METHOD)。JSON 欄位: $(jq -r 'keys | join(", ")' "$PROBE")"
   else
-    warn "探測回傳異常,成本統計可能不準。內容:"; head -c 400 "$PROBE" >&2; echo
+    echo >&2
+    printf '\033[31m✗ 冒煙測試失敗,已中止 —— 一次批次呼叫都沒送出。\033[0m\n' >&2
+    printf '  claude 回傳 (rc=%s):\n' "$PROBE_RC" >&2
+    sed 's/^/    /' <<<"$(head -c 600 <<<"$PROBE_TXT")" >&2
+    echo >&2
+
+    if grep -qiE 'invalid api key|authentication_error|401|unauthorized' <<<"$PROBE_TXT"; then
+      cat >&2 <<EOF
+  這是憑證問題。-p 模式下,只要環境裡有 ANTHROPIC_API_KEY,它就會蓋過你的
+  互動式登入 —— 即使那把 key 已經失效。目前狀態:
+    ANTHROPIC_API_KEY  = ${ANTHROPIC_API_KEY:+已設定 (長度 ${#ANTHROPIC_API_KEY}, 結尾 …${ANTHROPIC_API_KEY: -4})}${ANTHROPIC_API_KEY:-未設定}
+    claude authMethod  = $AUTH_METHOD
+
+  兩條路,看你要哪種計費:
+    (a) 要用 API credits —— 到 platform.claude.com 開一把新的,然後
+          export ANTHROPIC_API_KEY=sk-ant-...
+    (b) 改用訂閱額度 (Pro/Max) —— 把 key 拿掉,讓它回到互動式登入
+          unset ANTHROPIC_API_KEY && claude auth status
+EOF
+    fi
+    exit 1
   fi
 fi
 
@@ -371,6 +401,7 @@ run_one() {
 
   if [[ $rc -eq 0 && "$subtype" == "success" ]]; then
     jq -r '.result' "$json" > "$md"
+    echo "$target|$cmd" >> "$OUT/successes.txt"
     printf '  ✓ %-50s %-9s $%s\n' "$target" "$cmd" "$cost"
   else
     printf '  ✗ %-50s %-9s rc=%s %s\n' "$target" "$cmd" "$rc" "$subtype"
@@ -382,9 +413,25 @@ run_one() {
 log "=== 批次分析: ${#TARGETS[@]} surface × $(wc -w <<<"$COMMANDS") 指令, 併發 $PARALLEL ==="
 log "模型=$MODEL  單次上限=\$$BUDGET_PER_CALL  總預算=\$$BUDGET_TOTAL"
 : > "$OUT/failures.txt"
+: > "$OUT/successes.txt"
+FAIL_FAST=5   # 連續這麼多次失敗且一次都沒成功過,就當作系統性問題中止
 
 for target in "${TARGETS[@]}"; do
   for cmd in $COMMANDS; do
+    # --- 熔斷:開頭就全掛代表環境有問題,別把剩下的呼叫全燒掉 ---
+    nfail=$(wc -l <"$OUT/failures.txt" 2>/dev/null | tr -d ' ')
+    nok=$(wc -l <"$OUT/successes.txt" 2>/dev/null | tr -d ' ')
+    if [[ "${nfail:-0}" -ge $FAIL_FAST && "${nok:-0}" -eq 0 ]]; then
+      echo >&2
+      printf '\033[31m✗ 前 %s 次呼叫全部失敗,一次都沒成功,判定為系統性問題,已中止。\033[0m\n' "$nfail" >&2
+      printf '  常見原因: API key 失效或額度用盡、impeccable 指令名稱不對、plugin 未安裝。\n' >&2
+      printf '  失敗明細: %s\n' "$OUT/failures.txt" >&2
+      printf '  其中一次的原始輸出:\n' >&2
+      head -c 500 "$(find "$RUNS" -name '*.err' -size +0 2>/dev/null | head -1)" 2>/dev/null | sed 's/^/    /' >&2
+      echo >&2
+      BATCH_ABORTED=1
+      break 2
+    fi
     if over_budget; then
       warn "已達總預算 \$$BUDGET_TOTAL (已花 \$$(tally_cost)),停止派送新工作。"
       warn "提高 --budget-total 後重跑即可從中斷處接續 (已完成的會自動跳過)。"
@@ -404,13 +451,37 @@ ok "批次完成,此專案累計 API 花費約 \$$SPENT"
 
 log "=== 彙整 ==="
 
+# 覆蓋率:沒跑成功的 surface 不能被當成「沒問題」
+EXPECTED=$(( ${#TARGETS[@]} * $(wc -w <<<"$COMMANDS") ))
+DONE=$(find "$REPORTS" -name '*.md' -size +0 2>/dev/null | wc -l | tr -d ' ')
+NFAIL=$(wc -l <"$OUT/failures.txt" 2>/dev/null | tr -d ' ')
+
 {
   echo "# Impeccable 批次分析結果"
   echo
+
+  # --- 誠實的健康狀態橫幅 ---
+  if [[ "${DONE:-0}" -eq 0 ]]; then
+    echo "> ## ⛔ 這次批次沒有產出任何報告"
+    echo ">"
+    echo "> 預期 $EXPECTED 次呼叫,成功 0 次,失敗 ${NFAIL:-0} 次。"
+    echo "> **下方所有數字都是「沒跑」,不是「沒問題」。不要拿這份當作品質證據。**"
+    echo "> 失敗原因見 \`failures.txt\` 與 \`runs/*.err\`,修好後重跑即可。"
+  elif [[ "${DONE:-0}" -lt "$EXPECTED" ]]; then
+    echo "> ## ⚠️ 覆蓋不完整"
+    echo ">"
+    echo "> 預期 $EXPECTED 次,成功 $DONE 次,失敗 ${NFAIL:-0} 次。"
+    echo "> 標記為「—」的格子是**沒跑到**,不代表該頁面沒問題。"
+  else
+    echo "> ✅ 覆蓋完整:$EXPECTED/$EXPECTED 次呼叫全部成功。"
+  fi
+  [[ "${BATCH_ABORTED:-0}" -eq 1 ]] && { echo ">"; echo "> 批次因連續失敗被熔斷中止,尚未派送的工作未執行。"; }
+  echo
+
   echo "- 專案: \`$PROJECT\`"
   echo "- 時間: $(date -Iseconds)"
   echo "- 切分單位: \`$UNIT\` · 指令: \`$COMMANDS\` · 模型: \`$MODEL\`"
-  echo "- Surface 數: ${#TARGETS[@]} · API 花費: \$$SPENT"
+  echo "- Surface 數: ${#TARGETS[@]} · 完成 $DONE/$EXPECTED · API 花費: \$$SPENT"
   echo
   echo "## 報告索引"
   echo
@@ -425,22 +496,45 @@ log "=== 彙整 ==="
       f="$REPORTS/$sl/$cmd.md"
       [[ -s "$f" ]] && row+=" [報告](reports/$sl/$cmd.md) |" || row+=" — |"
     done
-    b=$(grep -ho '\[BLOCKER\]' "$REPORTS/$sl/"*.md 2>/dev/null | wc -l | tr -d ' ')
-    m=$(grep -ho '\[MAJOR\]'   "$REPORTS/$sl/"*.md 2>/dev/null | wc -l | tr -d ' ')
-    echo "$row $b | $m |"
+    if find "$REPORTS/$sl" -name '*.md' -size +0 2>/dev/null | grep -q .; then
+      b=$(grep -ho '\[BLOCKER\]' "$REPORTS/$sl/"*.md 2>/dev/null | wc -l | tr -d ' ')
+      m=$(grep -ho '\[MAJOR\]'   "$REPORTS/$sl/"*.md 2>/dev/null | wc -l | tr -d ' ')
+      echo "$row $b | $m |"
+    else
+      echo "$row 未跑 | 未跑 |"   # 絕不以 0 呈現沒跑到的頁面
+    fi
   done
   echo
   echo "## 嚴重度總計"
   echo
-  for sev in BLOCKER MAJOR MINOR NIT; do
-    n=$(grep -rho "\[$sev\]" "$REPORTS" 2>/dev/null | wc -l | tr -d ' ')
-    echo "- **$sev**: $n"
-  done
+  if [[ "${DONE:-0}" -eq 0 ]]; then
+    echo "沒有任何報告產出,無統計可言。"
+  else
+    echo "(僅統計成功跑完的 $DONE 份報告)"
+    echo
+    for sev in BLOCKER MAJOR MINOR NIT; do
+      n=$(grep -rho "\[$sev\]" "$REPORTS" 2>/dev/null | wc -l | tr -d ' ')
+      echo "- **$sev**: $n"
+    done
+  fi
+
+  if [[ -s "$OUT/failures.txt" ]]; then
+    echo
+    echo "## 失敗明細"
+    echo
+    echo "| Surface | 指令 | rc | 原因 |"
+    echo "|---|---|---|---|"
+    while IFS='|' read -r t c r s _; do
+      [[ -n "$t" ]] && echo "| \`$t\` | $c | $r | $s |"
+    done < "$OUT/failures.txt"
+  fi
 } > "$OUT/INDEX.md"
 ok "$OUT/INDEX.md"
 
 # 把所有報告收斂成一份可直接拿去實作的 backlog
-if [[ $RUN_BACKLOG -eq 1 && $DRY_RUN -eq 0 ]]; then
+if [[ $RUN_BACKLOG -eq 1 && $DRY_RUN -eq 0 && "${DONE:-0}" -eq 0 ]]; then
+  warn "沒有任何報告,跳過 backlog (不浪費一次呼叫去讀空目錄)"
+elif [[ $RUN_BACKLOG -eq 1 && $DRY_RUN -eq 0 ]]; then
   log "產生實作 backlog…"
   sid="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)"
   CLAUDE_CODE_RETRY_WATCHDOG=1 \
