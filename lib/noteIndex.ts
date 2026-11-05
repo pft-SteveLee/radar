@@ -6,6 +6,7 @@ const NOTES_PER_JOB = 30;
 const JOB_TITLES: Record<string, string> = {
   reddit_digest: 'Reddit 摘要',
   changelog_watch: 'Changelog 週報',
+  dev_weekly: '開發週報',
 };
 
 const taipeiDate = (timestamp: string) =>

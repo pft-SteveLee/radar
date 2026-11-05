@@ -1,0 +1,15 @@
+# Repos covered by the dev_weekly job (full owner/name). Adding a repo is a config edit.
+repos:
+  - perfect-corp/ymk-web-utils
+  - perfect-corp/yce-frontend
+  - perfect-corp/ymk-web-cicd
+  - perfect-corp/yco-api-console
+  - perfect-corp/bc-console-ui
+  - perfect-corp/ymk-web-sdk
+  - perfect-corp/pmt-api
+  - perfect-corp/smb-frontend
+  - perfect-corp/smb-api
+  - perfect-corp/smb-admin
+  - perfect-corp/smb-backend
+  - perfect-corp/smb-strapi
+  - perfect-corp/smb-shopify
