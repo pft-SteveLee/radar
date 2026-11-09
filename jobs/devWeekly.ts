@@ -28,6 +28,7 @@ import { isoWeek, weekStart } from './prStats.ts';
 
 const JOB = 'dev_weekly';
 const GROUP_ATTEMPTS = 2;
+const GROUP_MAX_TOKENS = 64_000;
 const BODY_CHARS = 600;
 const OTHER_FEATURE = '其他';
 const LINKS_PER_FEATURE = 5;
@@ -150,6 +151,7 @@ export async function groupPrs(
         system: withContext(readPrompt('devWeeklyGroup.md'), context),
         user,
         schema: GROUP_SCHEMA,
+        maxTokens: GROUP_MAX_TOKENS,
       });
       return normalizeGroups(answer, merged);
     } catch (error) {

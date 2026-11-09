@@ -100,13 +100,26 @@ test('normalizeGroups throws a SyntaxError when there is no features array', () 
 const validAnswer = { features: [{ name: 'a', summary: 's', prs: [0, 1, 2, 3] }] };
 
 function fakeCall(answers: unknown[]) {
-  const calls: { job: string; model: string; system: string; user: string; schema?: object }[] = [];
+  const calls: {
+    job: string;
+    model: string;
+    system: string;
+    user: string;
+    schema?: object;
+    maxTokens?: number;
+  }[] = [];
   const call = (async (options: (typeof calls)[number]) => {
     calls.push(options);
     return answers[calls.length - 1];
   }) as never;
   return { calls, deps: { call } };
 }
+
+test('groupPrs allows an answer long enough for a week with hundreds of PRs', async () => {
+  const { calls, deps } = fakeCall([validAnswer]);
+  await groupPrs(merged, {}, null, deps);
+  assert.equal(calls[0].maxTokens, 64000);
+});
 
 test('groupPrs asks Sonnet with the schema, the context and a compact PR list', async () => {
   const { calls, deps } = fakeCall([validAnswer]);
