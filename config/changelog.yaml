@@ -3,9 +3,9 @@ sources:
   - id: claude-code
     kind: githubReleases
     repo: anthropics/claude-code
-  - id: orca
+  - id: herdr
     kind: githubReleases
-    repo: stablyai/orca
+    repo: herdrdev/herdr
   - id: api-release-notes
     kind: markdown
     url: https://platform.claude.com/docs/en/release-notes/overview.md

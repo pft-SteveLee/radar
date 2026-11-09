@@ -15,7 +15,7 @@ Stages 1 to 3 of 4 are built: shared `lib/` plus the `reddit_digest`, `changelog
 | `reddit_digest` (built) | daily 07:15, so the note exists before 08:00 | Haiku 5.5 scores, Sonnet 5.5 summarizes posts and comments |
 | `pr_stats` (built; merged PRs per member and ISO week, trend on `/prs`) | daily 06:30 | none |
 | `dev_weekly` (built; GitHub PRs/issues of the repos in `config/repos.yaml`) | Mon 09:00 | Sonnet 5.5; Opus 5.5 only for diffs of PRs with a short description (<50 words) and >100 changed lines |
-| `changelog_watch` (built; Claude Code, Claude API, Orca ADE, skills/plugin marketplaces) | Fri 09:00 | Haiku 5.5 diff triage, Sonnet 5.5 summary |
+| `changelog_watch` (built; Claude Code, Claude API, herdr, skills/plugin marketplaces) | Fri 09:00 | Haiku 5.5 diff triage, Sonnet 5.5 summary |
 | `amp_compare` (competitor feature matrix per AMP workspace) | monthly or manual | Sonnet extracts, Opus 5.5 aligns and analyzes, Fable 5.1 for `--deep` |
 
 ## Commands
