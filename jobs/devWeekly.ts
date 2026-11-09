@@ -64,7 +64,7 @@ export interface RawWeek {
 export interface Options {
   week: string;
   upload: boolean;
-  config: { repos: string[]; token: string };
+  config: { repos: string[]; token: string; members: string[] };
 }
 
 const GROUP_SCHEMA = {
@@ -318,6 +318,18 @@ async function describeLargePrs(
   return sentences;
 }
 
+export function readMembers(): string[] {
+  try {
+    const file = parseYaml(
+      readFileSync(join(process.env.CONFIG_DIR ?? 'config', 'prStats.yaml'), 'utf8'),
+    ) as { members?: unknown } | null;
+    return Array.isArray(file?.members) ? file.members.map(String) : [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
 export async function run(options: Options, deps: Deps): Promise<RunResult> {
   const startedAt = new Date().toISOString();
   const warnings: string[] = [];
@@ -336,19 +348,29 @@ export async function run(options: Options, deps: Deps): Promise<RunResult> {
   const context = readContext();
   if (context === null) warnings.push('找不到 config/devWeeklyContext.md，功能命名會比較籠統');
 
-  const sentences = await describeLargePrs(raw, options, deps, warnings);
-  const features = raw.merged.length ? await groupPrs(raw.merged, sentences, context, deps) : [];
+  const members = new Set(options.config.members);
+  if (!members.size) warnings.push('config/prStats.yaml 沒有成員名單，週報未依團隊過濾');
+  const byTeam = (item: { author: string }) => !members.size || members.has(item.author);
+  const team = {
+    ...raw,
+    merged: raw.merged.filter(byTeam),
+    openPrs: raw.openPrs.filter(byTeam),
+    openIssues: raw.openIssues.filter(byTeam),
+  };
+
+  const sentences = await describeLargePrs(team, options, deps, warnings);
+  const features = team.merged.length ? await groupPrs(team.merged, sentences, context, deps) : [];
   const snapshot = new Date(raw.fetchedAt);
   const text = note({
     title: `[開發週報] ${options.week}`,
     body: renderReport({
-      mergedCount: raw.merged.length,
+      mergedCount: team.merged.length,
       features,
-      stuck: stuckPrs(raw.openPrs, snapshot),
-      staleDrafts: staleDrafts(raw.openPrs, snapshot),
-      undescribed: raw.merged.filter(isUndescribedLarge),
+      stuck: stuckPrs(team.openPrs, snapshot),
+      staleDrafts: staleDrafts(team.openPrs, snapshot),
+      undescribed: team.merged.filter(isUndescribedLarge),
       staleIssues: staleIssues(
-        raw.openIssues,
+        team.openIssues,
         referencedIssues([...raw.merged, ...raw.openPrs]),
         snapshot,
       ),
@@ -387,7 +409,11 @@ if (import.meta.main) {
           readFileSync(join(process.env.CONFIG_DIR ?? 'config', 'repos.yaml'), 'utf8'),
         ) as { repos: string[] };
         return run(
-          { week, upload: !values['no-upload'], config: { repos: configFile.repos, token } },
+          {
+            week,
+            upload: !values['no-upload'],
+            config: { repos: configFile.repos, token, members: readMembers() },
+          },
           {
             fetch,
             sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
