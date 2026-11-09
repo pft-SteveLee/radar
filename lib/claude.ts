@@ -23,6 +23,7 @@ interface CallOptions {
   system: string;
   user: string;
   schema?: Record<string, unknown>;
+  maxTokens?: number;
 }
 
 export interface CostLine {
@@ -36,22 +37,28 @@ export interface CostLine {
   usd: number;
 }
 
+const LONG_CALL_TIMEOUT_MS = 20 * 60 * 1000;
+
 const costLogPath = () => join(process.env.OUTPUT_DIR ?? 'output', 'cost.jsonl');
 
 export async function call(
-  { job, model, system, user, schema }: CallOptions,
+  { job, model, system, user, schema, maxTokens }: CallOptions,
   client: Anthropic = new Anthropic({ maxRetries: 3 }),
 ): Promise<string | unknown> {
   const price = PRICES[model];
   if (!price) throw new Error(`No price known for model ${model}`);
 
-  const response = await client.messages.create({
-    model,
-    max_tokens: 16000,
-    system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
-    messages: [{ role: 'user', content: user }],
-    ...(schema && { output_config: { format: { type: 'json_schema', schema } } }),
-  });
+  const response = await client.messages.create(
+    {
+      model,
+      max_tokens: maxTokens ?? 16000,
+      system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+      messages: [{ role: 'user', content: user }],
+      ...(schema && { output_config: { format: { type: 'json_schema', schema } } }),
+    },
+    // The SDK refuses a large non-streaming max_tokens unless the timeout is explicit.
+    maxTokens ? { timeout: LONG_CALL_TIMEOUT_MS } : undefined,
+  );
 
   const { input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens } =
     response.usage;

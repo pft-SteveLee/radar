@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, test } from 'node:test';
+import Anthropic from '@anthropic-ai/sdk';
 import { call, MODELS, readCostLines, runCost } from '../lib/claude.ts';
 
 interface FakeRequest {
@@ -61,6 +62,33 @@ test('call returns the text, caches the system prompt and logs the cost of the c
   assert.equal(line.outputTokens, 500);
   assert.equal(line.cacheRead, 2000);
   assert.ok(Math.abs(line.usd - 0.0074) < 1e-9);
+});
+
+const sdkClient = (bodies: { max_tokens: number }[]) =>
+  new Anthropic({
+    apiKey: 'test-key',
+    fetch: async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return Response.json({
+        content: [{ type: 'text', text: 'ok' }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+    },
+  });
+
+test('call sends the default max_tokens through the real SDK', async () => {
+  const bodies: { max_tokens: number }[] = [];
+  await call({ job: 'a', model: MODELS.sonnet, system: 'S', user: 'U' }, sdkClient(bodies));
+  assert.equal(bodies[0].max_tokens, 16000);
+});
+
+test('call accepts a maxTokens the SDK would otherwise refuse without streaming', async () => {
+  const bodies: { max_tokens: number }[] = [];
+  await call(
+    { job: 'a', model: MODELS.sonnet, system: 'S', user: 'U', maxTokens: 64000 },
+    sdkClient(bodies),
+  );
+  assert.equal(bodies[0].max_tokens, 64000);
 });
 
 test('call with a schema sends it as the output format and returns the parsed JSON', async () => {
