@@ -3,9 +3,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, test } from 'node:test';
-import { type Deps, previousWeek, type RawWeek, run } from '../jobs/devWeekly.ts';
+import { type Deps, previousWeek, type RawWeek, readMembers, run } from '../jobs/devWeekly.ts';
 import { MODELS } from '../lib/claude.ts';
-import { load } from '../lib/state.ts';
+import { load, save } from '../lib/state.ts';
 
 const WEEK = '2026-W45';
 const NOW = new Date('2026-11-09T01:00:00Z');
@@ -51,6 +51,7 @@ function setup(scenario: Partial<Scenario> = {}) {
   const counts = { graphql: 0, diffs: 0, opus: 0, sonnet: 0 };
   const published: { alias: string; text: string }[] = [];
   const opusUsers: string[] = [];
+  const sonnetUsers: string[] = [];
   const deps: Deps = {
     fetch: (async (url: string, init?: RequestInit) => {
       if (String(url).endsWith('/graphql')) {
@@ -90,6 +91,7 @@ function setup(scenario: Partial<Scenario> = {}) {
         return '加入權限檢查  ';
       }
       counts.sonnet++;
+      sonnetUsers.push(options.user);
       const ids = (JSON.parse(options.user) as { id: number }[]).map((pr) => pr.id);
       return { features: [{ name: '功能', summary: '摘要', prs: ids, overlap: '' }] };
     }) as never,
@@ -98,10 +100,10 @@ function setup(scenario: Partial<Scenario> = {}) {
       return { url: `https://codimd.test/${alias}`, status: 'updated' };
     }) as never,
   };
-  return { deps, counts, published, opusUsers, state };
+  return { deps, counts, published, opusUsers, sonnetUsers, state };
 }
 
-const config = (repos: string[]) => ({ repos, token: 'token' });
+const config = (repos: string[]) => ({ repos, token: 'token', members: [] as string[] });
 const options = (repos = ['o/a'], upload = true) => ({ week: WEEK, upload, config: config(repos) });
 
 beforeEach(() => {
@@ -114,6 +116,100 @@ beforeEach(() => {
   process.env.OUTPUT_DIR = join(root, 'output');
   process.env.CONFIG_DIR = join(root, 'config');
   process.env.PROMPTS_DIR = join(root, 'prompts');
+});
+
+const OLD = '2026-10-01T01:00:00Z';
+const item = (number: number, author: string, title: string) => ({
+  repo: 'o/a',
+  number,
+  title,
+  url: `https://github.com/o/a/pull/${number}`,
+  author,
+  createdAt: OLD,
+  updatedAt: OLD,
+});
+const mergedItem = (number: number, author: string, title: string, body = '') => ({
+  ...item(number, author, title),
+  body,
+  additions: 500,
+  deletions: 1,
+  changedFiles: 1,
+  headRefName: 'feature/x',
+  baseRefName: 'amp/master',
+  mergedAt: '2026-11-03T01:00:00Z',
+});
+const openItem = (number: number, author: string, title: string, isDraft: boolean) => ({
+  ...item(number, author, title),
+  body: '',
+  headRefName: 'feature/x',
+  isDraft,
+});
+const seedRaw = (): RawWeek => {
+  const raw = {
+    week: WEEK,
+    fetchedAt: '2026-11-09T00:30:00Z',
+    merged: [
+      mergedItem(1, 'alice', 'team-merged'),
+      mergedItem(2, 'outsider', 'outsider-merged', 'fixes #50'),
+    ],
+    openPrs: [
+      openItem(3, 'alice', 'team-stuck', false),
+      openItem(4, 'outsider', 'outsider-stuck', false),
+      openItem(5, 'outsider', 'outsider-draft', true),
+    ],
+    openIssues: [
+      item(6, 'alice', 'team-issue'),
+      item(7, 'outsider', 'outsider-issue'),
+      item(50, 'alice', 'mentioned-by-outsider'),
+    ],
+  };
+  save(`devWeekly/raw/${WEEK}`, raw);
+  return raw;
+};
+const teamOptions = (members: string[]) => ({
+  week: WEEK,
+  upload: true,
+  config: { ...config(['o/a']), members },
+});
+
+test('only listed members reach the models and every section of the note', async () => {
+  const raw = seedRaw();
+  const { deps, published, opusUsers, sonnetUsers } = setup();
+  await run(teamOptions(['alice']), deps);
+  const text = published[0].text;
+  assert.doesNotMatch(text, /outsider-(merged|stuck|draft|issue)/);
+  assert.match(text, /team-merged/);
+  assert.match(text, /team-stuck/);
+  assert.match(text, /team-issue/);
+  assert.match(text, /上週合併 1 個 PR，1 位作者/);
+  assert.equal(opusUsers.length, 1);
+  assert.doesNotMatch(opusUsers[0], /outsider/);
+  assert.equal((JSON.parse(sonnetUsers[0]) as unknown[]).length, 1);
+  assert.deepEqual(load<RawWeek | null>(`devWeekly/raw/${WEEK}`, null), raw);
+});
+
+test('an issue mentioned only by an outsider PR is not reported as unattended', async () => {
+  seedRaw();
+  const { deps, published } = setup();
+  await run(teamOptions(['alice']), deps);
+  assert.doesNotMatch(published[0].text, /mentioned-by-outsider/);
+});
+
+test('an empty member list filters nothing and warns', async () => {
+  seedRaw();
+  const { deps, published } = setup();
+  const result = await run(teamOptions([]), deps);
+  assert.match(published[0].text, /outsider-merged/);
+  assert.ok(result.warnings.some((warning) => warning.includes('prStats.yaml')));
+});
+
+test('readMembers returns the logins, or an empty list without a usable file', () => {
+  assert.deepEqual(readMembers(), []);
+  const path = join(process.env.CONFIG_DIR as string, 'prStats.yaml');
+  writeFileSync(path, 'members: []\n');
+  assert.deepEqual(readMembers(), []);
+  writeFileSync(path, 'members:\n  - alice\n  - bob\n');
+  assert.deepEqual(readMembers(), ['alice', 'bob']);
 });
 
 test('a run over two repos writes the note, saves the raw file and publishes once', async () => {
