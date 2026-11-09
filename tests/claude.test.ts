@@ -82,13 +82,57 @@ test('call sends the default max_tokens through the real SDK', async () => {
   assert.equal(bodies[0].max_tokens, 16000);
 });
 
-test('call accepts a maxTokens the SDK would otherwise refuse without streaming', async () => {
-  const bodies: { max_tokens: number }[] = [];
-  await call(
-    { job: 'a', model: MODELS.sonnet, system: 'S', user: 'U', maxTokens: 64000 },
-    sdkClient(bodies),
+const streamEvents = [
+  {
+    type: 'message_start',
+    message: {
+      id: 'm',
+      type: 'message',
+      role: 'assistant',
+      model: MODELS.sonnet,
+      content: [],
+      stop_reason: null,
+      stop_sequence: null,
+      usage: { input_tokens: 7, output_tokens: 1 },
+    },
+  },
+  { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+  { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '{"a":' } },
+  { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '1}' } },
+  { type: 'content_block_stop', index: 0 },
+  {
+    type: 'message_delta',
+    delta: { stop_reason: 'end_turn', stop_sequence: null },
+    usage: { output_tokens: 9 },
+  },
+  { type: 'message_stop' },
+];
+
+test('call streams a request with maxTokens, so a long answer keeps the connection active', async () => {
+  const bodies: { max_tokens: number; stream?: boolean }[] = [];
+  const client = new Anthropic({
+    apiKey: 'test-key',
+    fetch: async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      if (!bodies[0].stream) return Response.json({ content: [], usage: {} });
+      const body = streamEvents
+        .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+        .join('');
+      return new Response(body, { headers: { 'content-type': 'text/event-stream' } });
+    },
+  });
+
+  const result = await call(
+    { job: 'a', model: MODELS.sonnet, system: 'S', user: 'U', schema: {}, maxTokens: 64000 },
+    client,
   );
+
   assert.equal(bodies[0].max_tokens, 64000);
+  assert.equal(bodies[0].stream, true);
+  assert.deepEqual(result, { a: 1 });
+  const [line] = costLines();
+  assert.equal(line.inputTokens, 7);
+  assert.equal(line.outputTokens, 9);
 });
 
 test('call with a schema sends it as the output format and returns the parsed JSON', async () => {

@@ -37,8 +37,6 @@ export interface CostLine {
   usd: number;
 }
 
-const LONG_CALL_TIMEOUT_MS = 20 * 60 * 1000;
-
 const costLogPath = () => join(process.env.OUTPUT_DIR ?? 'output', 'cost.jsonl');
 
 export async function call(
@@ -48,17 +46,17 @@ export async function call(
   const price = PRICES[model];
   if (!price) throw new Error(`No price known for model ${model}`);
 
-  const response = await client.messages.create(
-    {
-      model,
-      max_tokens: maxTokens ?? 16000,
-      system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
-      messages: [{ role: 'user', content: user }],
-      ...(schema && { output_config: { format: { type: 'json_schema', schema } } }),
-    },
-    // The SDK refuses a large non-streaming max_tokens unless the timeout is explicit.
-    maxTokens ? { timeout: LONG_CALL_TIMEOUT_MS } : undefined,
-  );
+  const params: Anthropic.MessageCreateParamsNonStreaming = {
+    model,
+    max_tokens: maxTokens ?? 16000,
+    system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+    messages: [{ role: 'user', content: user }],
+    ...(schema && { output_config: { format: { type: 'json_schema', schema } } }),
+  };
+  // A long non-streaming request sends nothing until it ends and timed out in production.
+  const response = await (maxTokens
+    ? client.messages.stream(params).finalMessage()
+    : client.messages.create(params));
 
   const { input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens } =
     response.usage;
