@@ -518,3 +518,45 @@ test('run still replaces a week file that an earlier run left unreadable', async
   const stored = JSON.parse(readFileSync(join(outputDir, 'prStats', '2026-W45.json'), 'utf8'));
   assert.deepEqual(stored.counts, { bob: 1 });
 });
+
+test('fetchCommits retries a network error from GraphQL', async () => {
+  const { graphql } = fakeGithub({
+    one: [
+      {
+        id: 'b1',
+        tip: '2026-11-03T02:00:00Z',
+        commits: [{ oid: 'a1', committedDate: '2026-11-03T02:00:00Z' }],
+      },
+    ],
+  });
+  const { deps } = fakeDeps([], graphql);
+  const inner = deps.fetch;
+  let dropped = false;
+  const flaky = {
+    ...deps,
+    fetch: (async (url: string, init?: RequestInit) => {
+      if (!dropped && String(init?.body).includes('query History')) {
+        dropped = true;
+        throw new TypeError('fetch failed');
+      }
+      return inner(url, init);
+    }) as typeof fetch,
+  };
+
+  const result = await fetchCommits('2026-11-02', '2026-11-04', config, flaky);
+
+  assert.deepEqual(result.weeks, { '2026-W45': { alice: 1 } });
+  assert.deepEqual(result.warnings, []);
+});
+
+test('fetchCommits names an organization that cannot be read, and skips a repo that vanished', async () => {
+  const { deps } = fakeDeps([], () => ({ organization: null }));
+  await assert.rejects(fetchCommits('2026-11-02', '2026-11-04', config, deps), /perfect-corp/);
+
+  const { graphql } = fakeGithub({ one: [] });
+  const vanished = fakeDeps([], (query, variables) =>
+    query.includes('query Branches') ? { repository: null } : graphql(query, variables),
+  );
+  const result = await fetchCommits('2026-11-02', '2026-11-04', config, vanished.deps);
+  assert.deepEqual(result, { weeks: {}, warnings: [] });
+});

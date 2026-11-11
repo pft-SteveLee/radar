@@ -76,15 +76,22 @@ export function waitMilliseconds(response: Response, now: Date): number | null {
 
 async function request<T>(url: string, token: string, deps: Deps, body?: unknown): Promise<T> {
   for (let attempt = 1; ; attempt++) {
-    const response = await deps.fetch(url, {
-      ...(body !== undefined && { method: 'POST', body: JSON.stringify(body) }),
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'radar',
-      },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
+    let response: Response;
+    try {
+      response = await deps.fetch(url, {
+        ...(body !== undefined && { method: 'POST', body: JSON.stringify(body) }),
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'radar',
+        },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      if (body === undefined || attempt >= MAX_ATTEMPTS) throw error;
+      await deps.sleep(SERVER_ERROR_WAIT_MS);
+      continue;
+    }
     if (response.ok) return (await response.json()) as T;
     const wait =
       response.status === 403 || response.status === 429
@@ -176,12 +183,15 @@ export async function fetchCommits(
   const warnings: string[] = [];
   for (const org of config.orgs) {
     const repositories = await allPages((after) =>
-      graphql<{ organization: { repositories: Page<{ name: string }> } }>(
+      graphql<{ organization: { repositories: Page<{ name: string }> } | null }>(
         REPOS_QUERY,
         { org, after },
         config.token,
         deps,
-      ).then((data) => data.organization.repositories),
+      ).then((data) => {
+        if (!data.organization) throw new Error(`organization ${org} cannot be read`);
+        return data.organization.repositories;
+      }),
     );
     for (const { name } of repositories) {
       try {
@@ -191,9 +201,13 @@ export async function fetchCommits(
           graphql<{
             repository: {
               refs: Page<{ id: string; target: { committedDate?: string } | null }>;
-            };
+            } | null;
           }>(BRANCHES_QUERY, { owner: org, name, after }, config.token, deps).then(
-            (data) => data.repository.refs,
+            (data) =>
+              data.repository?.refs ?? {
+                nodes: [],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
           ),
         );
         for (const branch of branches) {
