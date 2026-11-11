@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, test } from 'node:test';
@@ -38,7 +38,16 @@ function fakeDeps(
             return new Response(JSON.stringify({ errors: [{ message: data.message }] }), {
               status: 200,
             });
-          return new Response(JSON.stringify({ data }), { status: 200 });
+          const missing = (data as { node?: null }).node === null;
+          return new Response(
+            JSON.stringify({
+              data,
+              ...(missing && {
+                errors: [{ type: 'NOT_FOUND', message: 'Could not resolve to a node' }],
+              }),
+            }),
+            { status: 200 },
+          );
         }
         urls.push(url);
         headers.push(init?.headers as Record<string, string>);
@@ -463,4 +472,49 @@ test('fetchCommits asks only for repositories that are not forks', async () => {
   await fetchCommits('2026-11-02', '2026-11-04', config, deps);
 
   assert.match(queries[0], /isFork: false/);
+});
+
+test('fetchCommits retries a 502 from GraphQL instead of giving up the repo', async () => {
+  let failed = false;
+  const { graphql } = fakeGithub({
+    one: [
+      {
+        id: 'b1',
+        tip: '2026-11-03T02:00:00Z',
+        commits: [{ oid: 'a1', committedDate: '2026-11-03T02:00:00Z' }],
+      },
+    ],
+  });
+  const { deps, sleeps } = fakeDeps([], graphql);
+  const inner = deps.fetch;
+  const flaky = {
+    ...deps,
+    fetch: (async (url: string, init?: RequestInit) => {
+      if (!failed && String(init?.body).includes('query Branches')) {
+        failed = true;
+        return new Response('{}', { status: 502 });
+      }
+      return inner(url, init);
+    }) as typeof fetch,
+  };
+
+  const result = await fetchCommits('2026-11-02', '2026-11-04', config, flaky);
+
+  assert.deepEqual(result.weeks, { '2026-W45': { alice: 1 } });
+  assert.deepEqual(result.warnings, []);
+  assert.equal(sleeps.length, 1);
+});
+
+test('run still replaces a week file that an earlier run left unreadable', async () => {
+  mkdirSync(join(outputDir, 'prStats'));
+  writeFileSync(join(outputDir, 'prStats', '2026-W45.json'), '{ half');
+  const broken = fakeGithub({ one: [] }, ['one']);
+
+  await run(
+    { from: '2026-11-04', to: '2026-11-04', config },
+    fakeDeps([() => searchPage(['bob'])], broken.graphql).deps,
+  );
+
+  const stored = JSON.parse(readFileSync(join(outputDir, 'prStats', '2026-W45.json'), 'utf8'));
+  assert.deepEqual(stored.counts, { bob: 1 });
 });

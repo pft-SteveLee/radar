@@ -330,7 +330,7 @@ function table(weeks: WeekCounts[], members: string[], currentWeek: string, unit
     })
     .join('\n');
   return `<div class="scroll" tabindex="0" role="region" aria-label="每週 ${unit} 數"><table>
-<caption>每週 ${unit} 數，新的在上，人均以目前成員名單計算（— 表示該週尚未抓取）<span class="hint">（可左右捲動）</span></caption>
+<caption>每週 ${unit} 數，新的在上，人均以目前成員名單計算（— 表示${unit === 'commit' ? '該週沒有 commit 資料' : '該週尚未抓取'}）<span class="hint">（可左右捲動）</span></caption>
 <thead><tr><th scope="col">週</th><th scope="col">合計</th><th scope="col">人均</th>${header}</tr></thead>
 <tbody>
 ${rows}

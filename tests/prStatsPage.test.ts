@@ -515,3 +515,18 @@ test('renderPrPage in prs mode links to the commit view and adds no metric field
   );
   assert.doesNotMatch(html, /name="metric"/);
 });
+
+test('renderPrPage in commits mode says a dash means no commit data, not that nothing was fetched', () => {
+  const html = renderPrPage({
+    weeks: [{ week: '2026-W45', counts: null }],
+    members: ['alice'],
+    range: { from: '2026-10-19', to: TODAY, weeks: 26, reason: null },
+    today: TODAY,
+    now: NOW,
+    maxAgeHours: 26,
+    updatedAt: null,
+    metric: 'commits',
+  });
+
+  assert.match(html, /— 表示該週沒有 commit 資料/);
+});

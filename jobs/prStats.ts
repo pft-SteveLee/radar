@@ -12,6 +12,7 @@ const SEARCH_RESULT_LIMIT = 1000;
 const REQUEST_SPACING_MS = 2100;
 const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_ATTEMPTS = 3;
+const SERVER_ERROR_WAIT_MS = 5000;
 const GRAPHQL_URL = 'https://api.github.com/graphql';
 
 export interface Deps {
@@ -88,7 +89,9 @@ async function request<T>(url: string, token: string, deps: Deps, body?: unknown
     const wait =
       response.status === 403 || response.status === 429
         ? waitMilliseconds(response, deps.now())
-        : null;
+        : body !== undefined && response.status >= 500
+          ? SERVER_ERROR_WAIT_MS
+          : null;
     if (wait === null || attempt >= MAX_ATTEMPTS) throw new Error(`HTTP ${response.status}`);
     await deps.sleep(wait);
   }
@@ -103,13 +106,15 @@ async function graphql<T>(
   token: string,
   deps: Deps,
 ): Promise<T> {
-  const result = await request<{ data: T; errors?: { message: string }[] }>(
+  const result = await request<{ data: T; errors?: { type?: string; message: string }[] }>(
     GRAPHQL_URL,
     token,
     deps,
     { query, variables },
   );
-  if (result.errors?.length) throw new Error(result.errors[0].message);
+  // A node deleted since it was listed comes back as null data plus NOT_FOUND, not as an HTTP error.
+  const failure = result.errors?.find((error) => error.type !== 'NOT_FOUND');
+  if (failure) throw new Error(failure.message);
   return result.data;
 }
 
@@ -264,6 +269,15 @@ export async function fetchWeek(
   }
 }
 
+function keptCommits(week: string, outputDir: string) {
+  try {
+    const commits = load<WeekFile | null>(`prStats/${week}`, null, outputDir)?.commits;
+    return commits && { commits };
+  } catch {
+    return undefined;
+  }
+}
+
 export async function run(
   options: { from: string; to: string; config: Config },
   deps: Deps,
@@ -285,15 +299,12 @@ export async function run(
     try {
       const result = await fetchWeek(week, options.config, deps);
       warnings.push(...result.warnings);
-      const previous = load<WeekFile | null>(`prStats/${week}`, null, outputDir);
       const file: WeekFile = {
         week,
         fetchedAt: deps.now().toISOString(),
         counts: result.counts,
         ...(result.truncated && { truncated: true as const }),
-        ...(commits
-          ? { commits: commits[week] ?? {} }
-          : previous?.commits && { commits: previous.commits }),
+        ...(commits ? { commits: commits[week] ?? {} } : keptCommits(week, outputDir)),
       };
       save(`prStats/${week}`, file, outputDir);
     } catch (error) {
