@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, test } from 'node:test';
-import { fetchWeek, isoWeek, run, weekStart, weeksBetween } from '../jobs/prStats.ts';
+import { fetchCommits, fetchWeek, isoWeek, run, weekStart, weeksBetween } from '../jobs/prStats.ts';
 
 const searchPage = (logins: string[], totalCount = logins.length) =>
   new Response(
@@ -14,7 +14,14 @@ const searchPage = (logins: string[], totalCount = logins.length) =>
     { status: 200 },
   );
 
-function fakeDeps(responses: (() => Response)[]) {
+const emptyOrganization = {
+  organization: { repositories: { nodes: [], pageInfo: { hasNextPage: false } } },
+};
+
+function fakeDeps(
+  responses: (() => Response)[],
+  graphql: (query: string, variables: Record<string, string>) => unknown = () => emptyOrganization,
+) {
   const urls: string[] = [];
   const headers: Record<string, string>[] = [];
   const sleeps: number[] = [];
@@ -24,6 +31,15 @@ function fakeDeps(responses: (() => Response)[]) {
     sleeps,
     deps: {
       fetch: (async (url: string, init?: RequestInit) => {
+        if (url === 'https://api.github.com/graphql') {
+          const body = JSON.parse(init?.body as string);
+          const data = graphql(body.query, body.variables);
+          if (data instanceof Error)
+            return new Response(JSON.stringify({ errors: [{ message: data.message }] }), {
+              status: 200,
+            });
+          return new Response(JSON.stringify({ data }), { status: 200 });
+        }
         urls.push(url);
         headers.push(init?.headers as Record<string, string>);
         const next = responses.shift();
@@ -150,6 +166,7 @@ test('run stores the counts of every week in the range and replaces an older fil
     week: '2026-W45',
     fetchedAt: '2026-11-04T03:00:00.000Z',
     counts: { bob: 1 },
+    commits: {},
   });
 
   const rerun = fakeDeps([() => searchPage(['dave'])]);
@@ -179,4 +196,271 @@ test('run keeps going and warns when one week fails, but fails when every week f
     run({ from: '2026-11-04', to: '2026-11-04', config }, allFail.deps),
     /HTTP 401/,
   );
+});
+
+interface FakeCommit {
+  oid: string;
+  committedDate: string;
+  parents?: number;
+  login?: string | null;
+  noAuthor?: true;
+}
+interface FakeBranch {
+  id: string;
+  tip: string;
+  commits: FakeCommit[];
+}
+
+function fakeGithub(repositories: Record<string, FakeBranch[]>, failing: string[] = []) {
+  const historyQueries: string[] = [];
+  const graphql = (query: string, variables: Record<string, string>) => {
+    if (query.includes('query Repos'))
+      return {
+        organization: {
+          repositories: {
+            nodes: Object.keys(repositories).map((name) => ({ name })),
+            pageInfo: { hasNextPage: false },
+          },
+        },
+      };
+    if (query.includes('query Branches')) {
+      if (failing.includes(variables.name)) return new Error('boom');
+      return {
+        repository: {
+          refs: {
+            nodes: repositories[variables.name].map((branch) => ({
+              id: branch.id,
+              target: { committedDate: branch.tip },
+            })),
+            pageInfo: { hasNextPage: false },
+          },
+        },
+      };
+    }
+    historyQueries.push(variables.id);
+    const branch = Object.values(repositories)
+      .flat()
+      .find((candidate) => candidate.id === variables.id);
+    return {
+      node: {
+        target: {
+          history: {
+            nodes: (branch?.commits ?? []).map((commit) => ({
+              oid: commit.oid,
+              committedDate: commit.committedDate,
+              parents: { totalCount: commit.parents ?? 1 },
+              author: commit.noAuthor
+                ? null
+                : { user: commit.login === null ? null : { login: commit.login ?? 'alice' } },
+            })),
+            pageInfo: { hasNextPage: false },
+          },
+        },
+      },
+    };
+  };
+  return { graphql, historyQueries };
+}
+
+test('fetchCommits counts a commit once per repo, however many branches hold it', async () => {
+  const shared = { oid: 'a1', committedDate: '2026-11-03T02:00:00Z' };
+  const { graphql } = fakeGithub({
+    one: [
+      { id: 'b1', tip: '2026-11-03T02:00:00Z', commits: [shared] },
+      {
+        id: 'b2',
+        tip: '2026-11-03T02:00:00Z',
+        commits: [shared, { oid: 'a2', committedDate: '2026-11-03T01:00:00Z' }],
+      },
+    ],
+  });
+  const { deps } = fakeDeps([], graphql);
+
+  const result = await fetchCommits('2026-11-02', '2026-11-04', config, deps);
+
+  assert.deepEqual(result.weeks, { '2026-W45': { alice: 2 } });
+});
+
+test('fetchCommits skips merge commits and commits without a GitHub account', async () => {
+  const { graphql } = fakeGithub({
+    one: [
+      {
+        id: 'b1',
+        tip: '2026-11-03T02:00:00Z',
+        commits: [
+          { oid: 'a1', committedDate: '2026-11-03T02:00:00Z', parents: 2 },
+          { oid: 'a2', committedDate: '2026-11-03T02:00:00Z', login: null },
+          { oid: 'a3', committedDate: '2026-11-03T02:00:00Z', login: 'bob' },
+        ],
+      },
+    ],
+  });
+  const { deps } = fakeDeps([], graphql);
+
+  const result = await fetchCommits('2026-11-02', '2026-11-04', config, deps);
+
+  assert.deepEqual(result.weeks, { '2026-W45': { bob: 1 } });
+});
+
+test('fetchCommits puts a commit into the Taipei week, not the UTC one', async () => {
+  const { graphql } = fakeGithub({
+    one: [
+      {
+        id: 'b1',
+        tip: '2026-11-08T16:30:00Z',
+        commits: [
+          { oid: 'sunday', committedDate: '2026-11-08T15:59:00Z' },
+          { oid: 'monday', committedDate: '2026-11-08T16:00:00Z' },
+        ],
+      },
+    ],
+  });
+  const { deps } = fakeDeps([], graphql);
+
+  const result = await fetchCommits('2026-11-02', '2026-11-10', config, deps);
+
+  assert.deepEqual(result.weeks, { '2026-W45': { alice: 1 }, '2026-W46': { alice: 1 } });
+});
+
+test('fetchCommits does not read the history of a branch last changed before the range', async () => {
+  const { graphql, historyQueries } = fakeGithub({
+    one: [
+      {
+        id: 'old',
+        tip: '2026-10-01T00:00:00Z',
+        commits: [{ oid: 'o1', committedDate: '2026-10-01T00:00:00Z' }],
+      },
+      {
+        id: 'new',
+        tip: '2026-11-03T02:00:00Z',
+        commits: [{ oid: 'n1', committedDate: '2026-11-03T02:00:00Z' }],
+      },
+    ],
+  });
+  const { deps } = fakeDeps([], graphql);
+
+  await fetchCommits('2026-11-02', '2026-11-04', config, deps);
+
+  assert.deepEqual(historyQueries, ['new']);
+});
+
+test('fetchCommits warns about a repo that fails and still counts the others', async () => {
+  const { graphql } = fakeGithub(
+    {
+      broken: [],
+      fine: [
+        {
+          id: 'b1',
+          tip: '2026-11-03T02:00:00Z',
+          commits: [{ oid: 'a1', committedDate: '2026-11-03T02:00:00Z' }],
+        },
+      ],
+    },
+    ['broken'],
+  );
+  const { deps } = fakeDeps([], graphql);
+
+  const result = await fetchCommits('2026-11-02', '2026-11-04', config, deps);
+
+  assert.deepEqual(result.weeks, { '2026-W45': { alice: 1 } });
+  assert.match(result.warnings[0], /perfect-corp\/broken.*boom/);
+});
+
+test('run stores commits next to the PR counts, and leaves them out when commits cannot be read', async () => {
+  const { graphql } = fakeGithub({
+    one: [
+      {
+        id: 'b1',
+        tip: '2026-11-03T02:00:00Z',
+        commits: [{ oid: 'a1', committedDate: '2026-11-03T02:00:00Z' }],
+      },
+    ],
+  });
+  const { deps } = fakeDeps([() => searchPage(['bob'])], graphql);
+  await run({ from: '2026-11-04', to: '2026-11-04', config }, deps);
+  const stored = JSON.parse(readFileSync(join(outputDir, 'prStats', '2026-W45.json'), 'utf8'));
+  assert.deepEqual(stored.commits, { alice: 1 });
+
+  outputDir = mkdtempSync(join(tmpdir(), 'radar-prstats-'));
+  process.env.OUTPUT_DIR = outputDir;
+  const failing = fakeDeps([() => searchPage(['bob'])], () => new Error('no access'));
+  const result = await run({ from: '2026-11-04', to: '2026-11-04', config }, failing.deps);
+  const kept = JSON.parse(readFileSync(join(outputDir, 'prStats', '2026-W45.json'), 'utf8'));
+  assert.equal('commits' in kept, false);
+  assert.deepEqual(kept.counts, { bob: 1 });
+  assert.match(result.warnings[0], /commits.*no access/);
+});
+
+test('fetchCommits skips a commit without an author and a branch deleted during the run', async () => {
+  const { graphql } = fakeGithub({
+    one: [
+      {
+        id: 'b1',
+        tip: '2026-11-03T02:00:00Z',
+        commits: [
+          { oid: 'a1', committedDate: '2026-11-03T02:00:00Z', noAuthor: true },
+          { oid: 'a2', committedDate: '2026-11-03T02:00:00Z' },
+        ],
+      },
+    ],
+  });
+  const withDeletedBranch = (query: string, variables: Record<string, string>) =>
+    query.includes('query History') && variables.id === 'gone'
+      ? { node: null }
+      : graphql(query, variables);
+  const branches = (query: string, variables: Record<string, string>) => {
+    const data = withDeletedBranch(query, variables) as {
+      repository?: { refs: { nodes: unknown[] } };
+    };
+    if (query.includes('query Branches'))
+      data.repository?.refs.nodes.push({
+        id: 'gone',
+        target: { committedDate: '2026-11-03T02:00:00Z' },
+      });
+    return data;
+  };
+  const { deps } = fakeDeps([], branches);
+
+  const result = await fetchCommits('2026-11-02', '2026-11-04', config, deps);
+
+  assert.deepEqual(result.weeks, { '2026-W45': { alice: 1 } });
+  assert.deepEqual(result.warnings, []);
+});
+
+test('run keeps the commits of an earlier run when this run could not read every repo', async () => {
+  const good = fakeGithub({
+    one: [
+      {
+        id: 'b1',
+        tip: '2026-11-03T02:00:00Z',
+        commits: [{ oid: 'a1', committedDate: '2026-11-03T02:00:00Z' }],
+      },
+    ],
+  });
+  await run(
+    { from: '2026-11-04', to: '2026-11-04', config },
+    fakeDeps([() => searchPage(['bob'])], good.graphql).deps,
+  );
+
+  const broken = fakeGithub({ one: [] }, ['one']);
+  const result = await run(
+    { from: '2026-11-04', to: '2026-11-04', config },
+    fakeDeps([() => searchPage(['bob'])], broken.graphql).deps,
+  );
+
+  const stored = JSON.parse(readFileSync(join(outputDir, 'prStats', '2026-W45.json'), 'utf8'));
+  assert.deepEqual(stored.commits, { alice: 1 });
+  assert.match(result.warnings[0], /one.*boom/);
+});
+
+test('fetchCommits asks only for repositories that are not forks', async () => {
+  const queries: string[] = [];
+  const { deps } = fakeDeps([], (query) => {
+    queries.push(query);
+    return emptyOrganization;
+  });
+
+  await fetchCommits('2026-11-02', '2026-11-04', config, deps);
+
+  assert.match(queries[0], /isFork: false/);
 });
