@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
-import { parseRange, renderPrPage } from '../web/prStats.ts';
+import { parseMetric, parseRange, readWeeks, renderPrPage } from '../web/prStats.ts';
 
 const TODAY = '2026-11-04';
 const NOW = new Date('2026-11-04T05:00:00Z');
@@ -452,4 +455,78 @@ test('renderPrPage puts the note about what is counted right under the title, be
 
 test('renderPrPage says when the page was made', () => {
   assert.match(page(['alice']), /<\/main>\s*<footer>頁面產生於 2026-11-04 13:00<\/footer>/);
+});
+
+test('parseMetric accepts commits and falls back to prs for anything else', () => {
+  assert.equal(parseMetric(new URLSearchParams('metric=commits')), 'commits');
+  assert.equal(parseMetric(new URLSearchParams('metric=nope')), 'prs');
+  assert.equal(parseMetric(new URLSearchParams('')), 'prs');
+});
+
+test('readWeeks reads commits for the commits metric, and a week without them is not fetched', () => {
+  const outputDir = mkdtempSync(join(tmpdir(), 'radar-weeks-'));
+  process.env.OUTPUT_DIR = outputDir;
+  mkdirSync(join(outputDir, 'prStats'));
+  writeFileSync(
+    join(outputDir, 'prStats', '2026-W44.json'),
+    JSON.stringify({ week: '2026-W44', counts: { Alice: 2 }, commits: { Alice: 9 } }),
+  );
+  writeFileSync(
+    join(outputDir, 'prStats', '2026-W43.json'),
+    JSON.stringify({ week: '2026-W43', counts: { Alice: 2 } }),
+  );
+
+  const weeks = readWeeks(['2026-W43', '2026-W44'], 'commits');
+
+  assert.deepEqual(weeks, [
+    { week: '2026-W43', counts: null },
+    { week: '2026-W44', counts: { alice: 9 }, truncated: false },
+  ]);
+  assert.deepEqual(readWeeks(['2026-W44'], 'prs')[0].counts, { alice: 2 });
+});
+
+test('renderPrPage in commits mode names commits, keeps the metric in links and form, and links back to PRs', () => {
+  const html = renderPrPage({
+    weeks: [{ week: '2026-W45', counts: { alice: 5 } }],
+    members: ['alice'],
+    range: { from: '2026-10-19', to: TODAY, weeks: 26, reason: null },
+    today: TODAY,
+    now: NOW,
+    maxAgeHours: 26,
+    updatedAt: null,
+    metric: 'commits',
+  });
+
+  assert.match(html, /<h1>每週 commit 數<\/h1>/);
+  assert.doesNotMatch(html, /merged PR/);
+  assert.match(html, /href="\/prs\?weeks=12&amp;metric=commits"/);
+  assert.match(html, /<input type="hidden" name="metric" value="commits">/);
+  assert.match(html, /<a href="\/prs\?weeks=26">PR<\/a>/);
+  assert.match(html, /<strong aria-current="true">commit<\/strong>/);
+  assert.match(html, /不含 merge commit 與已刪除的 branch/);
+});
+
+test('renderPrPage in prs mode links to the commit view and adds no metric field', () => {
+  const html = page(['alice']);
+
+  assert.match(
+    html,
+    /<a href="\/prs\?from=2026-10-19&amp;to=2026-11-04&amp;metric=commits">commit<\/a>/,
+  );
+  assert.doesNotMatch(html, /name="metric"/);
+});
+
+test('renderPrPage in commits mode says a dash means no commit data, not that nothing was fetched', () => {
+  const html = renderPrPage({
+    weeks: [{ week: '2026-W45', counts: null }],
+    members: ['alice'],
+    range: { from: '2026-10-19', to: TODAY, weeks: 26, reason: null },
+    today: TODAY,
+    now: NOW,
+    maxAgeHours: 26,
+    updatedAt: null,
+    metric: 'commits',
+  });
+
+  assert.match(html, /— 表示該週沒有 commit 資料/);
 });

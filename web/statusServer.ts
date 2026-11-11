@@ -5,7 +5,7 @@ import { parse as parseYaml } from 'yaml';
 import { weeksBetween } from '../jobs/prStats.ts';
 import { readCostLines } from '../lib/claude.ts';
 import { readRuns } from '../lib/runLog.ts';
-import { parseRange, readWeeks, renderPrPage } from './prStats.ts';
+import { parseMetric, parseRange, readWeeks, renderPrPage } from './prStats.ts';
 import { renderPage, summarizeMonth } from './status.ts';
 
 const MONTHLY_BUDGET_USD = 100;
@@ -45,17 +45,19 @@ function statusPage(): string {
 function prPage(query: URLSearchParams): string {
   const today = new Date().toLocaleDateString('sv', { timeZone: 'Asia/Taipei' });
   const range = parseRange(query, today);
+  const metric = parseMetric(query);
   const lastSuccess = readRuns(Number.POSITIVE_INFINITY).find(
     (run) => run.job === 'pr_stats' && run.status === 'ok',
   );
   return renderPrPage({
-    weeks: readWeeks(weeksBetween(range.from, range.to)),
+    weeks: readWeeks(weeksBetween(range.from, range.to), metric),
     members: prMembers(),
     range,
     today,
     now: new Date(),
     maxAgeHours: MAX_AGE_HOURS.pr_stats,
     updatedAt: lastSuccess?.startedAt ?? null,
+    metric,
   });
 }
 

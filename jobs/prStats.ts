@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { parse as parseYaml } from 'yaml';
 import { type RunResult, recordRun } from '../lib/runLog.ts';
-import { save } from '../lib/state.ts';
+import { load, save } from '../lib/state.ts';
 
 const JOB = 'pr_stats';
 const DAY_MS = 86_400_000;
@@ -12,6 +12,8 @@ const SEARCH_RESULT_LIMIT = 1000;
 const REQUEST_SPACING_MS = 2100;
 const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_ATTEMPTS = 3;
+const SERVER_ERROR_WAIT_MS = 5000;
+const GRAPHQL_URL = 'https://api.github.com/graphql';
 
 export interface Deps {
   fetch: typeof fetch;
@@ -29,6 +31,7 @@ export interface WeekFile {
   fetchedAt: string;
   counts: Record<string, number>;
   truncated?: true;
+  commits?: Record<string, number>;
 }
 
 const toDate = (day: string) => new Date(`${day}T00:00:00Z`);
@@ -71,28 +74,174 @@ export function waitMilliseconds(response: Response, now: Date): number | null {
   return response.status === 429 ? 60_000 : null;
 }
 
-async function search(url: string, token: string, deps: Deps) {
+async function request<T>(url: string, token: string, deps: Deps, body?: unknown): Promise<T> {
   for (let attempt = 1; ; attempt++) {
-    const response = await deps.fetch(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'radar',
-      },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-    if (response.ok)
-      return (await response.json()) as {
-        total_count: number;
-        items: { user: { login: string } | null }[];
-      };
+    let response: Response;
+    try {
+      response = await deps.fetch(url, {
+        ...(body !== undefined && { method: 'POST', body: JSON.stringify(body) }),
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'radar',
+        },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      if (body === undefined || attempt >= MAX_ATTEMPTS) throw error;
+      await deps.sleep(SERVER_ERROR_WAIT_MS);
+      continue;
+    }
+    if (response.ok) return (await response.json()) as T;
     const wait =
       response.status === 403 || response.status === 429
         ? waitMilliseconds(response, deps.now())
-        : null;
+        : body !== undefined && response.status >= 500
+          ? SERVER_ERROR_WAIT_MS
+          : null;
     if (wait === null || attempt >= MAX_ATTEMPTS) throw new Error(`HTTP ${response.status}`);
     await deps.sleep(wait);
   }
+}
+
+const search = (url: string, token: string, deps: Deps) =>
+  request<{ total_count: number; items: { user: { login: string } | null }[] }>(url, token, deps);
+
+async function graphql<T>(
+  query: string,
+  variables: Record<string, string | null>,
+  token: string,
+  deps: Deps,
+): Promise<T> {
+  const result = await request<{ data: T; errors?: { type?: string; message: string }[] }>(
+    GRAPHQL_URL,
+    token,
+    deps,
+    { query, variables },
+  );
+  // A node deleted since it was listed comes back as null data plus NOT_FOUND, not as an HTTP error.
+  const failure = result.errors?.find((error) => error.type !== 'NOT_FOUND');
+  if (failure) throw new Error(failure.message);
+  return result.data;
+}
+
+interface Page<Node> {
+  nodes: Node[];
+  pageInfo: { hasNextPage: boolean; endCursor: string | null };
+}
+
+async function allPages<Node>(
+  read: (after: string | null) => Promise<Page<Node>>,
+): Promise<Node[]> {
+  const nodes: Node[] = [];
+  for (let after: string | null = null; ; ) {
+    const page = await read(after);
+    nodes.push(...page.nodes);
+    if (!page.pageInfo.hasNextPage) return nodes;
+    after = page.pageInfo.endCursor;
+  }
+}
+
+const PAGE_INFO = 'pageInfo { hasNextPage endCursor }';
+const REPOS_QUERY = `query Repos($org: String!, $after: String) {
+  organization(login: $org) { repositories(first: 100, after: $after, isFork: false) { nodes { name } ${PAGE_INFO} } }
+}`;
+const BRANCHES_QUERY = `query Branches($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    refs(refPrefix: "refs/heads/", first: 100, after: $after) {
+      nodes { id target { ... on Commit { committedDate } } } ${PAGE_INFO}
+    }
+  }
+}`;
+const HISTORY_QUERY = `query History($id: ID!, $since: GitTimestamp!, $until: GitTimestamp!, $after: String) {
+  node(id: $id) { ... on Ref { target { ... on Commit {
+    history(since: $since, until: $until, first: 100, after: $after) {
+      nodes { oid committedDate parents { totalCount } author { user { login } } } ${PAGE_INFO}
+    }
+  } } } }
+}`;
+
+interface HistoryCommit {
+  oid: string;
+  committedDate: string;
+  parents: { totalCount: number };
+  author: { user: { login: string } | null } | null;
+}
+
+const taipeiWeek = (instant: string) =>
+  isoWeek(new Date(instant).toLocaleDateString('sv', { timeZone: 'Asia/Taipei' }));
+
+export async function fetchCommits(
+  from: string,
+  to: string,
+  config: Config,
+  deps: Deps,
+): Promise<{ weeks: Record<string, Record<string, number>>; warnings: string[] }> {
+  const since = `${weekStart(isoWeek(from))}T00:00:00+08:00`;
+  const until = `${toDay(new Date(toDate(weekStart(isoWeek(to))).getTime() + 7 * DAY_MS))}T00:00:00+08:00`;
+  const weeks: Record<string, Record<string, number>> = {};
+  const warnings: string[] = [];
+  for (const org of config.orgs) {
+    const repositories = await allPages((after) =>
+      graphql<{ organization: { repositories: Page<{ name: string }> } | null }>(
+        REPOS_QUERY,
+        { org, after },
+        config.token,
+        deps,
+      ).then((data) => {
+        if (!data.organization) throw new Error(`organization ${org} cannot be read`);
+        return data.organization.repositories;
+      }),
+    );
+    for (const { name } of repositories) {
+      try {
+        const seen = new Set<string>();
+        // Branches are filtered here: their order by tip date is not reliable, so every page is read.
+        const branches = await allPages((after) =>
+          graphql<{
+            repository: {
+              refs: Page<{ id: string; target: { committedDate?: string } | null }>;
+            } | null;
+          }>(BRANCHES_QUERY, { owner: org, name, after }, config.token, deps).then(
+            (data) =>
+              data.repository?.refs ?? {
+                nodes: [],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+          ),
+        );
+        for (const branch of branches) {
+          const tip = branch.target?.committedDate;
+          if (!tip || Date.parse(tip) < Date.parse(since)) continue;
+          const commits = await allPages((after) =>
+            graphql<{ node: { target: { history: Page<HistoryCommit> } } | null }>(
+              HISTORY_QUERY,
+              { id: branch.id, since, until, after },
+              config.token,
+              deps,
+            ).then(
+              (data) =>
+                data.node?.target.history ?? {
+                  nodes: [],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+            ),
+          );
+          for (const commit of commits) {
+            const login = commit.author?.user?.login;
+            if (seen.has(commit.oid)) continue;
+            seen.add(commit.oid);
+            if (!login || commit.parents.totalCount > 1) continue;
+            const week = taipeiWeek(commit.committedDate);
+            weeks[week] = { ...weeks[week], [login]: (weeks[week]?.[login] ?? 0) + 1 };
+          }
+        }
+      } catch (error) {
+        warnings.push(`commits ${org}/${name}: ${(error as Error).message}`);
+      }
+    }
+  }
+  return { weeks, warnings };
 }
 
 export async function fetchWeek(
@@ -134,13 +283,31 @@ export async function fetchWeek(
   }
 }
 
+function keptCommits(week: string, outputDir: string) {
+  try {
+    const commits = load<WeekFile | null>(`prStats/${week}`, null, outputDir)?.commits;
+    return commits && { commits };
+  } catch {
+    return undefined;
+  }
+}
+
 export async function run(
   options: { from: string; to: string; config: Config },
   deps: Deps,
 ): Promise<RunResult> {
   const weeks = weeksBetween(options.from, options.to);
+  const outputDir = process.env.OUTPUT_DIR ?? 'output';
   const warnings: string[] = [];
   const errors: string[] = [];
+  let commits: Awaited<ReturnType<typeof fetchCommits>>['weeks'] | null = null;
+  try {
+    const result = await fetchCommits(options.from, options.to, options.config, deps);
+    if (result.warnings.length === 0) commits = result.weeks;
+    warnings.push(...result.warnings);
+  } catch (error) {
+    warnings.push(`commits: ${(error as Error).message}`);
+  }
   for (const [index, week] of weeks.entries()) {
     if (index > 0) await deps.sleep(REQUEST_SPACING_MS);
     try {
@@ -151,8 +318,9 @@ export async function run(
         fetchedAt: deps.now().toISOString(),
         counts: result.counts,
         ...(result.truncated && { truncated: true as const }),
+        ...(commits ? { commits: commits[week] ?? {} } : keptCommits(week, outputDir)),
       };
-      save(`prStats/${week}`, file, process.env.OUTPUT_DIR ?? 'output');
+      save(`prStats/${week}`, file, outputDir);
     } catch (error) {
       errors.push(`${week}: ${(error as Error).message}`);
     }
