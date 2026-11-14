@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import {
   fetchMyCommits,
   fetchPullRequests,
+  isDay,
   renderReport,
   reportRange,
   run,
@@ -28,6 +29,7 @@ interface FakeGithub {
   orgRepos?: Record<string, FakeBranch[]>;
   ownRepos?: Record<string, FakeBranch[]>;
   failing?: string[];
+  unreadableOrg?: true;
   search?: (query: string) => unknown[];
   searchCount?: number;
 }
@@ -51,14 +53,16 @@ function fakeDeps(github: FakeGithub = {}) {
         },
       };
     if (query.includes('query Repos'))
-      return {
-        organization: {
-          repositories: {
-            nodes: Object.keys(orgRepos).map((repo) => ({ name: repo.split('/')[1] })),
-            pageInfo: lastPage,
-          },
-        },
-      };
+      return github.unreadableOrg
+        ? { organization: null }
+        : {
+            organization: {
+              repositories: {
+                nodes: Object.keys(orgRepos).map((repo) => ({ name: repo.split('/')[1] })),
+                pageInfo: lastPage,
+              },
+            },
+          };
     if (query.includes('query Branches')) {
       const repo = `${variables.owner}/${variables.name}`;
       if (github.failing?.includes(repo)) return new Error('boom');
@@ -194,6 +198,27 @@ test('fetchMyCommits warns about a repo that fails and still lists the others', 
 
   assert.equal(result.commits.length, 1);
   assert.deepEqual(result.warnings, ['commits perfect-corp/broken: boom']);
+});
+
+test('fetchMyCommits warns about an org that cannot be read and still lists my own repos', async () => {
+  const { deps } = fakeDeps({
+    ownRepos: { 'me/home': [{ id: 'b3', tip: inRange, commits: [{ oid: 'a3' }] }] },
+    unreadableOrg: true,
+  });
+
+  const result = await fetchMyCommits(range, config, deps);
+
+  assert.equal(result.commits.length, 1);
+  assert.deepEqual(result.warnings, [
+    'commits perfect-corp: organization perfect-corp cannot be read',
+  ]);
+});
+
+test('isDay accepts only a real calendar day', () => {
+  assert.equal(isDay('2026-11-17'), true);
+  assert.equal(isDay('2026-02-30'), false);
+  assert.equal(isDay('2026-13-01'), false);
+  assert.equal(isDay('2026-1-1'), false);
 });
 
 const pullRequest = (number: number, reviewedAt: string[] = []) => ({

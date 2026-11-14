@@ -8,12 +8,12 @@ import { note } from '../lib/render.ts';
 import { type RunResult, recordRun } from '../lib/runLog.ts';
 import {
   allPages,
-  BRANCHES_QUERY,
+  branchCommits,
   type Deps as GithubDeps,
   graphql,
+  orgRepositories,
   PAGE_INFO,
   type Page,
-  REPOS_QUERY,
 } from './prStats.ts';
 
 const JOB = 'daily_report';
@@ -39,6 +39,9 @@ export interface Commit {
 const shiftDay = (day: string, days: number) =>
   new Date(Date.parse(`${day}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
 const startOf = (day: string) => `${day}T00:00:00+08:00`;
+
+export const isDay = (day: string) =>
+  /^\d{4}-\d{2}-\d{2}$/.test(day) && new Date(`${day}T00:00:00Z`).toJSON()?.slice(0, 10) === day;
 
 export function reportRange(today: string): Range {
   const isMonday = new Date(`${today}T00:00:00Z`).getUTCDay() === 1;
@@ -68,8 +71,6 @@ interface HistoryCommit {
   parents: { totalCount: number };
 }
 
-const emptyPage = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
-
 export async function fetchMyCommits(
   range: Range,
   config: Config,
@@ -77,22 +78,17 @@ export async function fetchMyCommits(
 ): Promise<{ commits: Commit[]; warnings: string[] }> {
   const since = startOf(range.from);
   const until = startOf(shiftDay(range.to, 1));
-  let author = '';
+  const warnings: string[] = [];
   const repos: string[] = [];
   for (const org of config.orgs) {
-    const names = await allPages((after) =>
-      graphql<{ organization: { repositories: Page<{ name: string }> } | null }>(
-        REPOS_QUERY,
-        { org, after },
-        config.token,
-        deps,
-      ).then((data) => {
-        if (!data.organization) throw new Error(`organization ${org} cannot be read`);
-        return data.organization.repositories;
-      }),
-    );
-    repos.push(...names.map(({ name }) => `${org}/${name}`));
+    try {
+      const names = await orgRepositories(org, config.token, deps);
+      repos.push(...names.map((name) => `${org}/${name}`));
+    } catch (error) {
+      warnings.push(`commits ${org}: ${(error as Error).message}`);
+    }
   }
+  let author = '';
   const own = await allPages((after) =>
     graphql<{ user: { id: string; repositories: Page<{ nameWithOwner: string }> } | null }>(
       ME_QUERY,
@@ -108,41 +104,22 @@ export async function fetchMyCommits(
   repos.push(...own.map(({ nameWithOwner }) => nameWithOwner));
 
   const commits: Commit[] = [];
-  const warnings: string[] = [];
   for (const repo of new Set(repos)) {
     const [owner, name] = repo.split('/');
     try {
-      const seen = new Set<string>();
-      // Branches are filtered here: their order by tip date is not reliable, so every page is read.
-      const branches = await allPages((after) =>
-        graphql<{
-          repository: {
-            refs: Page<{ id: string; target: { committedDate?: string } | null }>;
-          } | null;
-        }>(BRANCHES_QUERY, { owner, name, after }, config.token, deps).then(
-          (data) => data.repository?.refs ?? emptyPage,
-        ),
+      const found = await branchCommits<HistoryCommit>(
+        { owner, name },
+        since,
+        MY_HISTORY_QUERY,
+        { author, since, until },
+        config.token,
+        deps,
       );
-      const found: Commit[] = [];
-      for (const branch of branches) {
-        const tip = branch.target?.committedDate;
-        if (!tip || Date.parse(tip) < Date.parse(since)) continue;
-        const history = await allPages((after) =>
-          graphql<{ node: { target: { history: Page<HistoryCommit> } } | null }>(
-            MY_HISTORY_QUERY,
-            { id: branch.id, author, since, until, after },
-            config.token,
-            deps,
-          ).then((data) => data.node?.target.history ?? emptyPage),
-        );
-        for (const commit of history) {
-          if (seen.has(commit.oid)) continue;
-          seen.add(commit.oid);
-          if (commit.parents.totalCount > 1) continue;
-          found.push({ repo, headline: commit.messageHeadline, url: commit.url });
-        }
-      }
-      commits.push(...found);
+      commits.push(
+        ...found
+          .filter((commit) => commit.parents.totalCount <= 1)
+          .map((commit) => ({ repo, headline: commit.messageHeadline, url: commit.url })),
+      );
     } catch (error) {
       warnings.push(`commits ${repo}: ${(error as Error).message}`);
     }
@@ -163,7 +140,7 @@ const SEARCH_QUERY = `query Search($q: String!, $login: String!, $after: String)
     issueCount ${PAGE_INFO}
     nodes { ... on PullRequest {
       number title url repository { nameWithOwner }
-      reviews(author: $login, first: 100) { nodes { submittedAt } }
+      reviews(author: $login, last: 100) { nodes { submittedAt } }
     } }
   }
 }`;
@@ -241,7 +218,7 @@ export interface Activity {
   commits: Commit[];
 }
 
-const escapeMarkdown = (text: string) => text.replace(/[\\[\]|`]/g, '\\$&');
+const escapeMarkdown = (text: string) => text.replace(/[\\[\]|`*_<]/g, '\\$&');
 
 export function renderReport(activity: Activity): string {
   const { opened, merged, reviewed, commits } = activity;
@@ -321,12 +298,11 @@ if (import.meta.main) {
     },
   });
   const date = values.date ?? new Date().toLocaleDateString('sv', { timeZone: 'Asia/Taipei' });
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`--date must be YYYY-MM-DD, got ${date}`);
-  const range = { ...reportRange(date), ...(values.from && { from: values.from }) };
-  if (values.to) range.to = values.to;
+  if (!isDay(date)) throw new Error(`--date must be a day like 2026-11-17, got ${date}`);
+  const usual = reportRange(date);
+  const range = { from: values.from ?? usual.from, to: values.to ?? usual.to };
   for (const day of [range.from, range.to])
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(day))
-      throw new Error(`--from/--to must be YYYY-MM-DD, got ${day}`);
+    if (!isDay(day)) throw new Error(`--from/--to must be a day like 2026-11-17, got ${day}`);
   if (range.from > range.to) throw new Error(`--from ${range.from} is after --to ${range.to}`);
   await recordRun(
     JOB,
