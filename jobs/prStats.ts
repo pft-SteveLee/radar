@@ -107,7 +107,7 @@ async function request<T>(url: string, token: string, deps: Deps, body?: unknown
 const search = (url: string, token: string, deps: Deps) =>
   request<{ total_count: number; items: { user: { login: string } | null }[] }>(url, token, deps);
 
-async function graphql<T>(
+export async function graphql<T>(
   query: string,
   variables: Record<string, string | null>,
   token: string,
@@ -125,12 +125,12 @@ async function graphql<T>(
   return result.data;
 }
 
-interface Page<Node> {
+export interface Page<Node> {
   nodes: Node[];
   pageInfo: { hasNextPage: boolean; endCursor: string | null };
 }
 
-async function allPages<Node>(
+export async function allPages<Node>(
   read: (after: string | null) => Promise<Page<Node>>,
 ): Promise<Node[]> {
   const nodes: Node[] = [];
@@ -142,11 +142,11 @@ async function allPages<Node>(
   }
 }
 
-const PAGE_INFO = 'pageInfo { hasNextPage endCursor }';
-const REPOS_QUERY = `query Repos($org: String!, $after: String) {
+export const PAGE_INFO = 'pageInfo { hasNextPage endCursor }';
+export const REPOS_QUERY = `query Repos($org: String!, $after: String) {
   organization(login: $org) { repositories(first: 100, after: $after, isFork: false) { nodes { name } ${PAGE_INFO} } }
 }`;
-const BRANCHES_QUERY = `query Branches($owner: String!, $name: String!, $after: String) {
+export const BRANCHES_QUERY = `query Branches($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
     refs(refPrefix: "refs/heads/", first: 100, after: $after) {
       nodes { id target { ... on Commit { committedDate } } } ${PAGE_INFO}

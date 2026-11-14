@@ -2,8 +2,9 @@ import type { publish } from './codimd.ts';
 import { type RunRecord, type RunResult, readRuns } from './runLog.ts';
 
 const ALIAS = 'radar-index';
-const NOTES_PER_JOB = 30;
+const MONTHS = 6;
 const JOB_TITLES: Record<string, string> = {
+  daily_report: '個人日報',
   reddit_digest: 'Reddit 摘要',
   changelog_watch: 'Changelog 週報',
   dev_weekly: '開發週報',
@@ -19,16 +20,23 @@ export function renderIndex(runs: RunRecord[]): string {
     const known = latestByUrl.get(run.url);
     if (!known || run.startedAt > known.startedAt) latestByUrl.set(run.url, run);
   }
-  const byJob = Map.groupBy(latestByUrl.values(), (run) => run.job);
+  const notes = [...latestByUrl.values()].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  const month = (run: RunRecord) => taipeiDate(run.startedAt).slice(0, 7);
+  const [year, newestMonth] = (notes[0] ? month(notes[0]) : '0-1').split('-').map(Number);
+  const oldestMonth = new Date(Date.UTC(year, newestMonth - MONTHS, 1)).toISOString().slice(0, 7);
+  const byJob = Map.groupBy(
+    notes.filter((run) => month(run) >= oldestMonth),
+    (run) => run.job,
+  );
   const sections = [...byJob.keys()].sort().map((job) => {
-    const rows = (byJob.get(job) ?? [])
-      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
-      .slice(0, NOTES_PER_JOB)
-      .map((run) => {
+    const months = [...Map.groupBy(byJob.get(job) ?? [], month)].map(([name, runs]) => {
+      const rows = runs.map((run) => {
         const url = run.url as string;
         return `- ${taipeiDate(run.startedAt)} [${url.split('/').at(-1)}](${url})`;
       });
-    return `## ${JOB_TITLES[job] ?? job}\n\n${rows.join('\n')}`;
+      return `### ${name}\n\n${rows.join('\n')}`;
+    });
+    return `## ${JOB_TITLES[job] ?? job}\n\n${months.join('\n\n')}`;
   });
   return `# radar 筆記索引\n\n${sections.join('\n\n')}\n`;
 }
