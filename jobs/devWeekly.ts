@@ -5,7 +5,7 @@ import { parse as parseYaml } from 'yaml';
 import { call, MODELS, runCost } from '../lib/claude.ts';
 import { publish } from '../lib/codimd.ts';
 import { withIndex } from '../lib/noteIndex.ts';
-import { note } from '../lib/render.ts';
+import { escapeMarkdown, note } from '../lib/render.ts';
 import { type RunResult, recordRun } from '../lib/runLog.ts';
 import { load, save } from '../lib/state.ts';
 import { withContext } from './changelogWatch.ts';
@@ -172,7 +172,6 @@ export interface ReportInput {
   fetchedAt: string;
 }
 
-const escapeMarkdown = (text: string) => text.replace(/[\\[\]|`]/g, '\\$&');
 const link = (item: { repo: string; number: number; url: string }) =>
   `[${shortRepo(item.repo)}#${item.number}](${item.url})`;
 const listOrNone = (lines: string[]) => (lines.length ? lines.join('\n') : '無');

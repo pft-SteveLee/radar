@@ -327,12 +327,12 @@ test('renderReport says 無活動 when nothing happened', () => {
   assert.equal(renderReport({ opened: [], merged: [], reviewed: [], commits: [] }), '無活動');
 });
 
-function runDeps(github: FakeGithub = {}) {
+function runDeps(github: FakeGithub = {}, status = 'written') {
   process.env.OUTPUT_DIR = mkdtempSync(join(tmpdir(), 'daily-report-'));
   const published: { alias: string; markdown: string }[] = [];
   const publish = (async (alias: string, markdown: string) => {
     published.push({ alias, markdown });
-    return { url: `https://codimd.test/${alias}`, status: 'written' };
+    return { url: `https://codimd.test/${alias}`, status };
   }) as never;
   return { published, deps: { ...fakeDeps(github).deps, publish } };
 }
@@ -371,4 +371,12 @@ test('run without upload writes the note file and publishes nothing', async () =
   assert.equal(published.length, 0);
   const file = readFileSync(join(process.env.OUTPUT_DIR as string, 'daily/2026-11-17.md'), 'utf8');
   assert.match(file, /^# 個人日報 2026-11-17（2026-11-16）\n\n無活動/);
+});
+
+test('run warns when the note was edited on the web and so was not replaced', async () => {
+  const { deps } = runDeps({}, 'editedOnWeb');
+
+  const result = await run({ date: '2026-11-16', range, upload: true, config }, deps);
+
+  assert.deepEqual(result.warnings, ['radar-daily-2026-11-16 在網頁上被改過，這次沒有更新']);
 });

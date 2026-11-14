@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util';
 import { parse as parseYaml } from 'yaml';
 import { publish } from '../lib/codimd.ts';
 import { withIndex } from '../lib/noteIndex.ts';
-import { note } from '../lib/render.ts';
+import { escapeMarkdown, note } from '../lib/render.ts';
 import { type RunResult, recordRun } from '../lib/runLog.ts';
 import {
   allPages,
@@ -218,8 +218,6 @@ export interface Activity {
   commits: Commit[];
 }
 
-const escapeMarkdown = (text: string) => text.replace(/[\\[\]|`*_<]/g, '\\$&');
-
 export function renderReport(activity: Activity): string {
   const { opened, merged, reviewed, commits } = activity;
   if (opened.length + merged.length + reviewed.length + commits.length === 0) return '無活動';
@@ -284,7 +282,7 @@ export async function run(options: Options, deps: Deps): Promise<RunResult> {
   const { url, status } = await deps.publish(`radar-daily-${date}`, text);
   console.log(`${url} (${status})`);
   if (status === 'editedOnWeb')
-    console.warn(`${url} was edited on the web, so it was not overwritten`);
+    return { url, warnings: [...warnings, `radar-daily-${date} 在網頁上被改過，這次沒有更新`] };
   return { url, warnings };
 }
 
