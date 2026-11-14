@@ -42,18 +42,56 @@ test('renderIndex titles the dev_weekly section 開發週報', () => {
   assert.doesNotMatch(text, /## dev_weekly/);
 });
 
-test('renderIndex lists at most 30 notes per job', () => {
-  const runs = Array.from({ length: 35 }, (_, index) =>
-    run(
-      'reddit_digest',
-      new Date(Date.UTC(2026, 9, index + 1)).toISOString(),
-      noteUrl(`note-${index}`),
-    ),
+test('renderIndex titles the daily_report section 個人日報', () => {
+  const text = renderIndex([
+    run('daily_report', '2026-11-16T00:30:00Z', noteUrl('radar-daily-2026-11-16')),
+  ]);
+  assert.match(text, /## 個人日報/);
+});
+
+test('renderIndex groups the notes of a job by Taipei month, newest month first', () => {
+  const text = renderIndex([
+    run('reddit_digest', '2026-10-30T00:00:00Z', noteUrl('october')),
+    run('reddit_digest', '2026-10-31T20:00:00Z', noteUrl('first-of-november')),
+    run('reddit_digest', '2026-11-04T00:00:00Z', noteUrl('november')),
+  ]);
+  assert.equal(
+    text,
+    [
+      '# radar 筆記索引',
+      '',
+      '## Reddit 摘要',
+      '',
+      '### 2026-11',
+      '',
+      '- 2026-11-04 [november](https://codimd.test/november)',
+      '- 2026-11-01 [first-of-november](https://codimd.test/first-of-november)',
+      '',
+      '### 2026-10',
+      '',
+      '- 2026-10-30 [october](https://codimd.test/october)',
+      '',
+    ].join('\n'),
   );
-  const text = renderIndex(runs);
-  assert.equal(text.match(/^- /gm)?.length, 30);
-  assert.match(text, /note-34\b/);
-  assert.doesNotMatch(text, /note-4\b/);
+});
+
+test('renderIndex keeps the six months up to the newest note, of every job', () => {
+  const runs = [4, 5, 6, 7, 8, 9, 10].map((month) =>
+    run('reddit_digest', new Date(Date.UTC(2026, month, 10)).toISOString(), noteUrl(`m${month}`)),
+  );
+  const text = renderIndex([
+    ...runs,
+    run('dev_weekly', '2026-01-05T00:00:00Z', noteUrl('old-weekly')),
+  ]);
+  assert.deepEqual(text.match(/^### .*/gm), [
+    '### 2026-11',
+    '### 2026-10',
+    '### 2026-09',
+    '### 2026-08',
+    '### 2026-07',
+    '### 2026-06',
+  ]);
+  assert.doesNotMatch(text, /old-weekly|開發週報/);
 });
 
 test('renderIndex leaves out runs without a note and failed runs', () => {

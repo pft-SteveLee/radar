@@ -14,6 +14,7 @@ const MAX_AGE_HOURS = {
   reddit_digest: 26,
   changelog_watch: 8 * 24,
   dev_weekly: 8 * 24,
+  daily_report: 4 * 24,
 };
 
 function prMembers(): string[] {

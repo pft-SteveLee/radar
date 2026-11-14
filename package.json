@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "digest": "node jobs/redditDigest.ts",
-    "pr-stats": "node jobs/prStats.ts"
+    "pr-stats": "node jobs/prStats.ts",
+    "daily": "node jobs/dailyReport.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.4.0",

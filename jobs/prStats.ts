@@ -107,7 +107,7 @@ async function request<T>(url: string, token: string, deps: Deps, body?: unknown
 const search = (url: string, token: string, deps: Deps) =>
   request<{ total_count: number; items: { user: { login: string } | null }[] }>(url, token, deps);
 
-async function graphql<T>(
+export async function graphql<T>(
   query: string,
   variables: Record<string, string | null>,
   token: string,
@@ -125,12 +125,12 @@ async function graphql<T>(
   return result.data;
 }
 
-interface Page<Node> {
+export interface Page<Node> {
   nodes: Node[];
   pageInfo: { hasNextPage: boolean; endCursor: string | null };
 }
 
-async function allPages<Node>(
+export async function allPages<Node>(
   read: (after: string | null) => Promise<Page<Node>>,
 ): Promise<Node[]> {
   const nodes: Node[] = [];
@@ -142,7 +142,7 @@ async function allPages<Node>(
   }
 }
 
-const PAGE_INFO = 'pageInfo { hasNextPage endCursor }';
+export const PAGE_INFO = 'pageInfo { hasNextPage endCursor }';
 const REPOS_QUERY = `query Repos($org: String!, $after: String) {
   organization(login: $org) { repositories(first: 100, after: $after, isFork: false) { nodes { name } ${PAGE_INFO} } }
 }`;
@@ -171,6 +171,60 @@ interface HistoryCommit {
 const taipeiWeek = (instant: string) =>
   isoWeek(new Date(instant).toLocaleDateString('sv', { timeZone: 'Asia/Taipei' }));
 
+export async function orgRepositories(org: string, token: string, deps: Deps): Promise<string[]> {
+  const repositories = await allPages((after) =>
+    graphql<{ organization: { repositories: Page<{ name: string }> } | null }>(
+      REPOS_QUERY,
+      { org, after },
+      token,
+      deps,
+    ).then((data) => {
+      if (!data.organization) throw new Error(`organization ${org} cannot be read`);
+      return data.organization.repositories;
+    }),
+  );
+  return repositories.map(({ name }) => name);
+}
+
+const emptyPage = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+
+// Commits of every branch whose tip is at or after `since`, once per repo by oid.
+// `historyQuery` takes $id (the branch) and $after plus `variables`.
+export async function branchCommits<Commit extends { oid: string }>(
+  repo: { owner: string; name: string },
+  since: string,
+  historyQuery: string,
+  variables: Record<string, string>,
+  token: string,
+  deps: Deps,
+): Promise<Commit[]> {
+  // Branches are filtered here: their order by tip date is not reliable, so every page is read.
+  const branches = await allPages((after) =>
+    graphql<{
+      repository: {
+        refs: Page<{ id: string; target: { committedDate?: string } | null }>;
+      } | null;
+    }>(BRANCHES_QUERY, { ...repo, after }, token, deps).then(
+      (data) => data.repository?.refs ?? emptyPage,
+    ),
+  );
+  const byOid = new Map<string, Commit>();
+  for (const branch of branches) {
+    const tip = branch.target?.committedDate;
+    if (!tip || Date.parse(tip) < Date.parse(since)) continue;
+    const commits = await allPages((after) =>
+      graphql<{ node: { target: { history: Page<Commit> } } | null }>(
+        historyQuery,
+        { ...variables, id: branch.id, after },
+        token,
+        deps,
+      ).then((data) => data.node?.target.history ?? emptyPage),
+    );
+    for (const commit of commits) if (!byOid.has(commit.oid)) byOid.set(commit.oid, commit);
+  }
+  return [...byOid.values()];
+}
+
 export async function fetchCommits(
   from: string,
   to: string,
@@ -182,59 +236,21 @@ export async function fetchCommits(
   const weeks: Record<string, Record<string, number>> = {};
   const warnings: string[] = [];
   for (const org of config.orgs) {
-    const repositories = await allPages((after) =>
-      graphql<{ organization: { repositories: Page<{ name: string }> } | null }>(
-        REPOS_QUERY,
-        { org, after },
-        config.token,
-        deps,
-      ).then((data) => {
-        if (!data.organization) throw new Error(`organization ${org} cannot be read`);
-        return data.organization.repositories;
-      }),
-    );
-    for (const { name } of repositories) {
+    for (const name of await orgRepositories(org, config.token, deps)) {
       try {
-        const seen = new Set<string>();
-        // Branches are filtered here: their order by tip date is not reliable, so every page is read.
-        const branches = await allPages((after) =>
-          graphql<{
-            repository: {
-              refs: Page<{ id: string; target: { committedDate?: string } | null }>;
-            } | null;
-          }>(BRANCHES_QUERY, { owner: org, name, after }, config.token, deps).then(
-            (data) =>
-              data.repository?.refs ?? {
-                nodes: [],
-                pageInfo: { hasNextPage: false, endCursor: null },
-              },
-          ),
+        const commits = await branchCommits<HistoryCommit>(
+          { owner: org, name },
+          since,
+          HISTORY_QUERY,
+          { since, until },
+          config.token,
+          deps,
         );
-        for (const branch of branches) {
-          const tip = branch.target?.committedDate;
-          if (!tip || Date.parse(tip) < Date.parse(since)) continue;
-          const commits = await allPages((after) =>
-            graphql<{ node: { target: { history: Page<HistoryCommit> } } | null }>(
-              HISTORY_QUERY,
-              { id: branch.id, since, until, after },
-              config.token,
-              deps,
-            ).then(
-              (data) =>
-                data.node?.target.history ?? {
-                  nodes: [],
-                  pageInfo: { hasNextPage: false, endCursor: null },
-                },
-            ),
-          );
-          for (const commit of commits) {
-            const login = commit.author?.user?.login;
-            if (seen.has(commit.oid)) continue;
-            seen.add(commit.oid);
-            if (!login || commit.parents.totalCount > 1) continue;
-            const week = taipeiWeek(commit.committedDate);
-            weeks[week] = { ...weeks[week], [login]: (weeks[week]?.[login] ?? 0) + 1 };
-          }
+        for (const commit of commits) {
+          const login = commit.author?.user?.login;
+          if (!login || commit.parents.totalCount > 1) continue;
+          const week = taipeiWeek(commit.committedDate);
+          weeks[week] = { ...weeks[week], [login]: (weeks[week]?.[login] ?? 0) + 1 };
         }
       } catch (error) {
         warnings.push(`commits ${org}/${name}: ${(error as Error).message}`);

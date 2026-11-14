@@ -2,3 +2,4 @@
 30 6 * * * cd /app && node jobs/prStats.ts
 0 9 * * 5 cd /app && node jobs/changelogWatch.ts
 0 9 * * 1 cd /app && node jobs/devWeekly.ts
+30 8 * * 1-5 cd /app && node jobs/dailyReport.ts
